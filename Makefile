@@ -3,7 +3,7 @@
 CFLAGS = -O3
 #CFLAGS = -g	# for debugging
 
-LIBS = -lpthread -lz
+LIBS = -lpthread
 
 ALL = onebam ONEview ONEstat
 
