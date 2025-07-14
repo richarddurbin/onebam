@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul  7 12:04 2025 (rd109)
+ * Last edited: Jul 14 10:11 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -14,7 +14,6 @@
 
 // globals
 int        NTHREAD = 8 ;
-OneSchema *schema ;
 
 // reference
 ExternalReference *reference = 0 ;
@@ -24,34 +23,34 @@ static bool  readReference (char *refname) ;
 // bam
 OneFile *ofRead = 0 ;
 
-static char oldUsage[] =
-  "Usage: onebam <global_option>* <command> <option|operation>+\n"
-  "\n"
-  "  global options are:\n"
-  "    -T <nthreads>                    number of threads [8]\n"
-  "\n"
-  "  commands are given below with their options/operations - options/operations are applied in order\n"
-  "    reference\n"
-  "      -build <XX.1ref> <tsv>         create database [default ending .1ref] from <acc,length, taxid> file\n"
-  "    bam\n"
-  "      -taxids <XX.tsv>               file with lines <acc>\\ttaxid\\n sorted on acc - required for writeRead\n"
-  "      -names                         keep sequence names\n"
-  "      -write1read <XX.1read>         write per-read information\n"
-  "      -aux <tag>:<fmt> <char>        record BAM tag with OneCode <char>, e.g. -aux AS:i s\n"
-  "      -write1bam <XX.1bam>           write out 1bam [default]\n"
-  "      -cramref <file_name|URL>       reference for CRAM - needed to read cram - do not confuse with -ref!\n"
-  "      -readBam <XX.bam>              read and process a bam (or sam or cram) file\n" ;
-
 static char usage[] =
-  "Usage: onebam <option|operation>+\n"
-  "  options/operations are applied in order\n"
-  "      -T <nthreads>                    number of threads [8]\n"
-  "      -taxids <XX.tsv>                 file with lines <acc>\\ttaxid\\n sorted on acc - required for writeRead\n"
-  "      -names                           keep sequence names\n"
+  "Usage: onebam <command> <options>* <args>*\n"
+  "  options and arguments depend on the command\n"
+  "  commands with arguments, each followed by their options:\n"
+  "    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam\n"
+  "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bam\n"
+  "      -taxid <XX.tsv>                 file with lines <acc>\\ttaxid\\n sorted on acc\n"
+  "         NB you must give taxids if you plan to use your .1bam to make .1read\n"              
   "      -aux <tag>:<fmt> <char>          record BAM tag with OneCode <char>, e.g. -aux AS:i s\n"
+  "         NB you must use '-aux AS:i s -aux MD:Z m' if you plant to use your .1bam to make .1read\n"
+  "      -names                           keep sequence names [default to drop names]\n"
   "      -cramref <file_name|URL>         reference for CRAM - needed to read cram\n"
-  "      -make1bam <XX.1bam> <XX.bam>     make 1bam from BAM\n"
-  "      -make1read <XX.1read> <XX.1bam>  make 1read from 1bam\n" ;
+  "    make1read <XX.1bam>           convert .1bam file to .1read (simplified information per read)\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
+  "    convertFastq <XX.fq[.gz]>     make .1seq file from fq, plus new fq file with ints for names\n"
+  "      -oSeq <ZZ.1seq>                  .1seq output file - default is XX.1seq for input XX.fq\n"
+  "      -oFq <ZZ-i.fq[.gz]>              .fq output file - default is XX-i.fq.gz for input XX.fq\n"
+  "      -names                           keep sequence names [default to drop names]\n"
+  "    makebin <taxid.tsv> <XX.bam>  make fixed-width binary file from BAM/SAM/CRAM file\n"
+  "      -o <ZZ.bin>                      output file - default is XX.bin for input XX.1bam\n"
+  "      -maxEdit <n>                     maximum number of edits [8]\n"
+  "    bin21bam <YY.1seq> <XX.bin>   make .1bam file from sorted .bin and .1seq\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bin\n"
+  "    bin21read <YY.1seq> <XX.bin>  make .1read file from sorted .bin and .1seq\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.bin\n" ;
 
 int main (int argc, char *argv[])
 {
@@ -59,34 +58,83 @@ int main (int argc, char *argv[])
   storeCommandLine (argc, argv) ;
   argc-- ; ++argv ;
   if (!argc) { fprintf (stderr, "%s", usage) ; exit (0) ; }
+  char *command = *argv ; ++argv ; --argc ;
 
-  schema = oneSchemaCreateFromText (schemaText) ;
-
+  char *outFileName = 0 ;
   char *taxidFileName = 0 ;
-  bool  isRead = false ;
   bool  isNames = false ;
 
-  while (argc)
-    if (!strcmp (*argv, "-T") && argc > 1) { NTHREAD = atoi(argv[1]) ; argc -= 2 ; argv += 2 ; }
-    else if (!strcmp (*argv, "-taxids") && argc > 1)
-      { taxidFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
-    else if (!strcmp (*argv, "-names"))
-      { isNames = true ; ++argv ; --argc ; }
-    else if (!strcmp (*argv, "-aux") && argc > 2)
-      { auxAdd (argv[2], argv[1]) ; argv += 3 ; argc -= 3 ; }
-    else if (!strcmp (*argv, "-cramref") && argc > 1)
-      { setCramReference (argv[1]) ; argv += 2 ; argc -= 2 ; }
-    else if (!strcmp (*argv, "-make1bam") && argc > 2)
-      { if (!bamConvert1bam (argv[2], argv[1], taxidFileName, isNames))
-	  die ("failed to convert bam file %s", argv[2]) ;
-	argv += 3 ; argc -= 3 ;
-      }
-    else if (!strcmp (*argv, "-make1read") && argc > 2)
-      { if (!bamConvert1read (argv[2], argv[1]))
-	  die ("failed to convert bam file %s", argv[2]) ;
-	argv += 3 ; argc -= 3 ;
-      }
-    else die ("unknown operation %s for onebam - run without args for usage", *argv) ;
+  if (!strcmp (command, "bam21bam"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-taxid") && argc > 1)
+	  { taxidFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-names"))
+	  { isNames = true ; ++argv ; --argc ; }
+	else if (!strcmp (*argv, "-aux") && argc > 2)
+	  { auxAdd (argv[2], argv[1]) ; argv += 3 ; argc -= 3 ; }
+	else if (!strcmp (*argv, "-cramref") && argc > 1)
+	  { setCramReference (argv[1]) ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam bam21bam option %s - run without args for usage", *argv) ;
+      if (argc != 1) die ("onebam bam21bam needs 1 not %d args; run without args for usage", argc) ;
+      if (!bam21bam (*argv, outFileName, taxidFileName, isNames))
+	  die ("failed to convert bam file %s", *argv) ;
+    }
+  else if (!strcmp (command, "make1read"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-T") && argc > 1) { NTHREAD = atoi(argv[1]) ; argc -= 2 ; argv += 2 ; }
+	else if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam make1read option %s - run without args for usage", *argv) ;
+      if (argc != 1) die ("onebam make1read needs 1 not %d args; run without args for usage", argc) ;
+      if (!bamMake1read (*argv, outFileName))
+	die ("failed to convert .1bam file %s to .1read", *argv) ;
+    }
+  else if (!strcmp (command, "convertFastq"))
+    { char *outFqName  = 0 ;
+      while (argc && **argv == '-')
+	if (!strcmp (*argv, "-oSeq") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-oSeq") && argc > 1)
+	  { outFqName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-names"))
+	  { isNames = true ; ++argv ; --argc ; }
+	else die ("unknown onebam convertFastq option %s - run without args for usage", *argv) ;
+      if (argc != 1) die ("onebam convertFastq needs 1 not %d args; run without args for usage", argc) ;
+      die ("convertFastq not implemented yet") ;
+    }
+  else if (!strcmp (command, "makebin"))
+    { int maxEdit = 8 ;
+      while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-maxEdit") && argc > 1)
+	  { maxEdit = atoi (*argv) ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam makebin option %s - run without args for usage", *argv) ;
+      if (argc != 2) die ("onebam makebin needs 2 not %d args; run without args for usage", argc) ;
+      die ("makeBin not implemented yet") ;
+    }
+  else if (!strcmp (command, "bin21bam"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-T") && argc > 1) { NTHREAD = atoi(argv[1]) ; argc -= 2 ; argv += 2 ; }
+	else if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam bin21bam option %s - run without args for usage", *argv) ;
+      if (argc != 2) die ("onebam bin21bam needs 2 not %d args; run without args for usage", argc) ;
+      die ("bin21bam not implemented yet") ;
+     }
+  else if (!strcmp (command, "bin21read"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-T") && argc > 1) { NTHREAD = atoi(argv[1]) ; argc -= 2 ; argv += 2 ; }
+	else if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam bin21read option %s - run without args for usage", *argv) ;
+      if (argc != 2) die ("onebam bin21read needs 2 not %d args; run without args for usage", argc) ;
+      die ("bin21read not implemented yet") ;
+    }
+  else
+    die ("unknown onebam command %s - run without arguments for usage", command) ;
 
   fprintf (stderr, "Total: ") ; timeTotal (stderr) ;
   exit (0) ;
@@ -165,6 +213,7 @@ static void *readRefThread (void *arg)
 
 static bool readReference (char *fname)
 {
+  OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
   OneFile *of = oneFileOpenRead (fname, schema, "ref", NTHREAD) ;
   if (!of) return false ;
 

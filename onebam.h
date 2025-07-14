@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul  7 11:46 2025 (rd109)
+ * Last edited: Jul 14 10:12 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -56,8 +56,8 @@ extern OneFile   *ofRead ;
 // onebamhts.c
 void setCramReference (char *cramRef) ;
 void auxAdd (char *oneCode, char *spec) ;
-bool bamConvert1bam (char *bamFileName, char *outFileName, char *taxidFileName, bool isNames) ;
-bool bamConvert1read (char *bamOneFileName, char *outFileName) ;
+bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool isNames) ;
+bool bamMake1read (char *bamOneFileName, char *outFileName) ;
 
 typedef struct {
   I32 prefix, suffix ;  // offsets in fixbuf of prefix and suffix

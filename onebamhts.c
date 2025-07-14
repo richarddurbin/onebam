@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul  7 12:16 2025 (rd109)
+ * Last edited: Jul 14 10:13 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -107,13 +107,13 @@ void auxAdd (char *oneCode, char *spec)
   a->fmt = (spec[3] == 'B') ? spec[4] + 1 : spec[3] ;
 }
 
-static int accOrder (const void *a, const void *b, void *names)
+static int accOrder (void *names, const void *a, const void *b)
 { return strcmp(((char**)names)[*(int*)a], ((char**)names)[*(int*)b]) ; }
-#ifndef _GNU_SOURCE
+#if (!defined(_GNU_SOURCE) && FALSE)
 static void *qsort_arg ;
 static int accOrderBare  (const void *a, const void *b)
 { return strcmp(((char**)qsort_arg)[*(int*)a], ((char**)qsort_arg)[*(int*)b]) ; }
-static void qsort_r(void *base, size_t n, size_t size, int (*comp)(const void *, const void *, void *), void *arg)
+static void qsort_r(void *base, size_t n, size_t size, void *arg, int (*comp)(const void *, const void *, void *))
 { qsort_arg = arg ; qsort (base, n, size, accOrderBare) ; }
 #endif
 
@@ -134,7 +134,7 @@ static const int  acgtCheck[] = {
 #define ENSURE_BUF_SIZE(buf,size,newSize,Type)  if (newSize>size) { Type* newBuf = new0(newSize,Type) ; \
     memcpy(newBuf,buf,size*sizeof(Type)) ; newFree(buf,size,Type) ; size = newSize ; buf = newBuf ; }
 
-bool bamConvert1bam (char *bamFileName, char *outFileName, char *taxidFileName, bool isNames)
+bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool isNames)
 {
   BamFile *bf = bamFileOpenRead (bamFileName) ;
   if (!bf) return false ;
@@ -178,7 +178,7 @@ bool bamConvert1bam (char *bamFileName, char *outFileName, char *taxidFileName, 
   // deal with the targets - first sort them, allowing for tid 0 = * (no target)
   int *tidMap = new(nTargets+1,int), *revMap = new(nTargets,int) ;
   for (i = 0 ; i < nTargets ; ++i) revMap[i] = i ;
-  qsort_r (revMap, nTargets, sizeof(int), accOrder, bf->h->target_name) ;
+  qsort_r (revMap, nTargets, sizeof(int), bf->h->target_name, accOrder) ;
   int *taxid = new0(nTargets+1,int) ;
   if (taxidFileName) // merge the header targets to this to identify the taxids
     { FILE *tf = fopen (taxidFileName, "r") ; if (!tf) die ("failed to open taxid file %s", taxidFileName) ;
@@ -402,7 +402,7 @@ static void *b2rThread (void *arg)
   return 0 ;
 }
 
-bool bamConvert1read (char *bamOneFileName, char *outFileName)
+bool bamMake1read (char *bamOneFileName, char *outFileName)
 {
   OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
   OneFile   *ofIn = oneFileOpenRead (bamOneFileName, 0, "bam", NTHREAD) ;
