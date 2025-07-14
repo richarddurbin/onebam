@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 14 10:11 2025 (rd109)
+ * Last edited: Jul 14 12:08 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -96,7 +96,7 @@ int main (int argc, char *argv[])
       while (argc && **argv == '-')
 	if (!strcmp (*argv, "-oSeq") && argc > 1)
 	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else if (!strcmp (*argv, "-oSeq") && argc > 1)
+	else if (!strcmp (*argv, "-oFq") && argc > 1)
 	  { outFqName = argv[1] ; argv += 2 ; argc -= 2 ; }
 	else if (!strcmp (*argv, "-names"))
 	  { isNames = true ; ++argv ; --argc ; }
