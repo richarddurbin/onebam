@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 16 07:55 2025 (rd109)
+ * Last edited: Jul 16 08:12 2025 (rd109)
  * * May 19 09:12 2024 (rd109): renamed composition to seqstat, for consistency
  * Created: Sun Nov 11 17:21:40 2018 (rd109)
  *-------------------------------------------------------------------
@@ -134,8 +134,11 @@ int main (int argc, char *argv[])
     }
 
   if (isIdInfo)
-    printf ("max identifier length %d with shared prefix length %d\n",
-	    maxIdLen, idPrefix ? (int)strlen(idPrefix) : 0) ;
+    { if (idPrefix) printf ("identifier max_length %d shared_prefix %s shared_prefix_length %d\n",
+			    maxIdLen, idPrefix, (int) strlen(idPrefix)) ;
+      else
+	printf ("no identifiers\n") ;
+    }
   
   if (isTime) timeTotal (stdout) ;
   seqIOclose (si) ;
