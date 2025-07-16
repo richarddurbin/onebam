@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 14 12:08 2025 (rd109)
+ * Last edited: Jul 15 18:57 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -14,6 +14,9 @@
 
 // globals
 int        NTHREAD = 8 ;
+
+// routine to convert sequence file to numbers
+static bool numberSeq (char* inName, char *out1seqName, char *outFqName, bool isNames) ;
 
 // reference
 ExternalReference *reference = 0 ;
@@ -38,7 +41,8 @@ static char usage[] =
   "    make1read <XX.1bam>           convert .1bam file to .1read (simplified information per read)\n"
   "      -T <nthreads>                    number of threads [8]\n"
   "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
-  "    convertFastq <XX.fq[.gz]>     make .1seq file from fq, plus new fq file with ints for names\n"
+  "    numberSeq <XX.fq[.gz]>        make .1seq file from fq, plus new fq file with ints for names\n"
+  "         NB will read and process fasta[.gz] or BAM/CRAM or even 1seq, as well as fastq[.gz]\n"
   "      -oSeq <ZZ.1seq>                  .1seq output file - default is XX.1seq for input XX.fq\n"
   "      -oFq <ZZ-i.fq[.gz]>              .fq output file - default is XX-i.fq.gz for input XX.fq\n"
   "      -names                           keep sequence names [default to drop names]\n"
@@ -91,7 +95,7 @@ int main (int argc, char *argv[])
       if (!bamMake1read (*argv, outFileName))
 	die ("failed to convert .1bam file %s to .1read", *argv) ;
     }
-  else if (!strcmp (command, "convertFastq"))
+  else if (!strcmp (command, "numberSeq"))
     { char *outFqName  = 0 ;
       while (argc && **argv == '-')
 	if (!strcmp (*argv, "-oSeq") && argc > 1)
@@ -100,9 +104,10 @@ int main (int argc, char *argv[])
 	  { outFqName = argv[1] ; argv += 2 ; argc -= 2 ; }
 	else if (!strcmp (*argv, "-names"))
 	  { isNames = true ; ++argv ; --argc ; }
-	else die ("unknown onebam convertFastq option %s - run without args for usage", *argv) ;
-      if (argc != 1) die ("onebam convertFastq needs 1 not %d args; run without args for usage", argc) ;
-      die ("convertFastq not implemented yet") ;
+	else die ("unknown onebam numberSeq option %s - run without args for usage", *argv) ;
+      if (argc != 1) die ("onebam numberSeq needs 1 not %d args; run without args for usage", argc) ;
+      if (!numberSeq (*argv, outFileName, outFqName, isNames))
+	die ("failed to convert sequence file to .1seq and numbered .fq.gz files") ;
     }
   else if (!strcmp (command, "makebin"))
     { int maxEdit = 8 ;
@@ -138,6 +143,48 @@ int main (int argc, char *argv[])
 
   fprintf (stderr, "Total: ") ; timeTotal (stderr) ;
   exit (0) ;
+}
+
+/************************ numberSeq ***********************************/
+
+#include "seqio.h"
+
+static bool numberSeq (char* inName, char *out1seqName, char *outFqName, bool isNames)
+{
+  SeqIO *siIn = seqIOopenRead (inName, 0, true) ;
+  if (!siIn) return false ;
+
+  char *stem = new (strlen(inName)+6, char) ;
+  strcpy (stem, inName) ;
+  char *s = stem + strlen(s) ;
+  if (s - stem > 3 && !strcmp (s-3, ".gz")) { s = s-3 ; *s = 0 ; }
+  while (s > stem)
+    if (*--s == '.') { *s = 0 ; break ; }
+    else if (*s == '/') break ; // just add the tag
+
+  if (!outFqName) outFqName = fnameTag (stem, "fqn.gz") ;
+  SeqIO *siOut = seqIOopenWrite (outFqName, FASTQ, 0, 1) ;
+  if (!siOut) { newFree (stem, strlen(inName)+6,char) ; seqIOclose (siIn) ; return false ; }
+
+  if (!out1seqName) out1seqName = fnameTag (stem, "1seq") ;
+  SeqIO *siSeq = seqIOopenWrite (out1seqName, ONE, 0, 1) ;
+  if (!siSeq) { newFree (stem, strlen(inName)+6,char) ; seqIOclose (siIn) ; seqIOclose (siOut) ; return false ; }
+
+  I64  nSeq = 0, tot = 0 ;
+  char ibuf[16] ;
+  while (seqIOread (siIn))
+    { sprintf (ibuf, "%lld", (long long) ++nSeq) ; // NB the increment here of nSeq
+      seqIOwrite (siOut, ibuf, 0, siIn->seqLen, sqioSeq(siIn), sqioQual(siIn)) ;
+      seqIOwrite (siSeq, isNames?sqioId(siIn):0, 0, siIn->seqLen, sqioSeq(siIn), sqioQual(siIn)) ;
+      tot += siIn->seqLen ;
+    }
+
+  seqIOclose (siIn) ;
+  seqIOclose (siOut) ;
+  seqIOclose (siSeq) ;
+  fprintf (stderr, "processed %lld sequences total length %lld\n", (long long) nSeq, (long long) tot) ;
+  newFree (stem, strlen(inName)+6, char) ;
+  return true ;
 }
 
 /*********************** reference package *****************************/
