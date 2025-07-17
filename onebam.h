@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 17 10:50 2025 (rd109)
+ * Last edited: Jul 17 12:16 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -48,10 +48,9 @@ static char *schemaText =
   "D X 3 3 INT 3 INT 3 INT      next fragment line for last B line: RNEXT, PNEXT, TLEN\n" ;
 // NB the schema must end inside the sequence ("O S 1 DNA") type, so we can add auxiliary linetypes dynamically
 
-extern int        NTHREAD ;
-extern OneSchema *schema ;
-
-extern OneFile   *ofRead ;
+// onebam.c
+extern int NTHREAD ;
+char *derivedName (char *inName, char *tag) ;
 
 // onebamhts.c
 void setCramReference (char *cramRef) ;

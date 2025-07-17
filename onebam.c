@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 15 18:57 2025 (rd109)
+ * Last edited: Jul 17 12:22 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -23,8 +23,21 @@ ExternalReference *reference = 0 ;
 static void  buildReference (char *refname, char *tsvname) ;
 static bool  readReference (char *refname) ;
 
-// bam
-OneFile *ofRead = 0 ;
+// extract stem from input filename
+char *derivedName (char *inName, char *tag)
+{
+  int   nameLen = strlen(inName) ;
+  char *stem = new (nameLen+1, char) ;
+  strcpy (stem, inName) ;
+  char *s = stem + nameLen ;
+  if (s - stem > 3 && !strcmp (s-3, ".gz")) { s = s-3 ; *s = 0 ; }
+  while (s > stem)
+    if (*--s == '.') { *s = 0 ; break ; }
+    else if (*s == '/') break ; // just add the tag
+  char *ret = fnameTag(stem,tag) ;
+  newFree (stem, nameLen+1, char) ;
+  return ret ;
+}
 
 static char usage[] =
   "Usage: onebam <command> <options>* <args>*\n"
@@ -153,22 +166,14 @@ static bool numberSeq (char* inName, char *out1seqName, char *outFqName, bool is
 {
   SeqIO *siIn = seqIOopenRead (inName, 0, true) ;
   if (!siIn) return false ;
-
-  char *stem = new (strlen(inName)+6, char) ;
-  strcpy (stem, inName) ;
-  char *s = stem + strlen(s) ;
-  if (s - stem > 3 && !strcmp (s-3, ".gz")) { s = s-3 ; *s = 0 ; }
-  while (s > stem)
-    if (*--s == '.') { *s = 0 ; break ; }
-    else if (*s == '/') break ; // just add the tag
-
-  if (!outFqName) outFqName = fnameTag (stem, "fqn.gz") ;
+  
+  if (!outFqName) outFqName = derivedName (inName, "fqn.gz") ;
   SeqIO *siOut = seqIOopenWrite (outFqName, FASTQ, 0, 1) ;
-  if (!siOut) { newFree (stem, strlen(inName)+6,char) ; seqIOclose (siIn) ; return false ; }
+  if (!siOut) { seqIOclose (siIn) ; return false ; }
 
-  if (!out1seqName) out1seqName = fnameTag (stem, "1seq") ;
+  if (!out1seqName) out1seqName = derivedName (inName, "1seq") ;
   SeqIO *siSeq = seqIOopenWrite (out1seqName, ONE, 0, 1) ;
-  if (!siSeq) { newFree (stem, strlen(inName)+6,char) ; seqIOclose (siIn) ; seqIOclose (siOut) ; return false ; }
+  if (!siSeq) { seqIOclose (siIn) ; seqIOclose (siOut) ; return false ; }
 
   I64  nSeq = 0, tot = 0 ;
   char ibuf[16] ;
@@ -183,7 +188,6 @@ static bool numberSeq (char* inName, char *out1seqName, char *outFqName, bool is
   seqIOclose (siOut) ;
   seqIOclose (siSeq) ;
   fprintf (stderr, "processed %lld sequences total length %lld\n", (long long) nSeq, (long long) tot) ;
-  newFree (stem, strlen(inName)+6, char) ;
   return true ;
 }
 

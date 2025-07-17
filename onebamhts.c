@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 17 10:53 2025 (rd109)
+ * Last edited: Jul 17 16:09 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -156,15 +156,8 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
       schemaText = newSchemaText ;
     }
   OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
-  if (!outFileName)
-    { for (s = bamFileName + strlen(bamFileName) ; *s != '.' && s > bamFileName ; --s) ;
-      if (s > bamFileName)
-	{ outFileName = new0 ((s-bamFileName)+6,char) ; strncpy (outFileName, bamFileName, (s-bamFileName)) ; }
-      else
-	{ outFileName = new0 (strlen(bamFileName)+6,char) ; strcpy (outFileName, bamFileName) ; }
-      strcat (outFileName, ".1bam") ;
-    }
-  of = oneFileOpenWriteNew (outFileName, schema, "bam", true, 1) ;
+  if (outFileName) of = oneFileOpenWriteNew (outFileName, schema, "bam", true, 1) ;
+  else of = oneFileOpenWriteNew (derivedName (bamFileName, "1bam"), schema, "bam", true, 1) ;
   if (!of) die ("failed to open ONEfile %s to write", outFileName) ;
   oneAddProvenance (of, "onebam", "0.1", getCommandLine()) ;
   if (auxFields && arrayMax(auxFields))
@@ -352,7 +345,7 @@ static void *b2rThread (void *arg)
 
   I64   seqLenMax ; oneStats (ti->ofIn, 'S', 0, &seqLenMax, 0) ;
   char *mLine = new (seqLenMax, char) ;
-  I32   mScore = -(1<<30) ;
+  I32   mScore ;
   char  mMap[128] ; { char  *s = ".-acgtnACGTN", *t = ".-tgcanTGCAN" ; while (*s) mMap[*s++] = *t++ ;  }
 
   int i, n = 0 ;
@@ -368,6 +361,7 @@ static void *b2rThread (void *arg)
       TaxInfo *tx ;
       I64      nCigar, *i64cigar ;
       arrayMax(aTx) = 0 ;
+      mScore = -(1<<30) ;
       while (oneReadLine (ti->ofIn) && ti->ofIn->lineType != 'S')
 	switch (ti->ofIn->lineType)
 	  {
@@ -403,30 +397,30 @@ static void *b2rThread (void *arg)
 		// first reconstruct reference string, then map that to the read with cigar
 		// see  https://vincebuffalo.com/notes/2014/01/17/md-tags-in-bam-files.html
 		int iS = 0 ; // position in sequence, reference
+		int nR=0; while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0'); --nM; }
 		while (nCigar)
 		  { int nS = bam_cigar_oplen(*i64cigar), op = bam_cigar_op(*i64cigar++) ; --nCigar ;
-		    int nR = 0 ;
-		    while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0') ; --nM ; }
 		    switch (bam_cigar_type(op))
 		      {
 		      case 0: break ; // do nothing
-		      case 1: // DELETE (or REF_SKIP)
+		      case 1: // INSERT (or SOFT_CLIP)
+			for (i = 0 ; i < nS ; ++i) mLine[iS++] = '-' ;
+			break ;
+		      case 2: // DELETE (or REF_SKIP)
 			while (nS--)
 			  { if (nR || nM < 2 || *md++ != '^') die ("bad refmatch") ;
 			    ++md ; nM -= 2 ; // eat up the deleted base
 			  }
 			break ;
-		      case 2: // INSERT (or SOFT_CLIP)
-			for (i = 0 ; i < nS ; ++i) mLine[iS++] = '-' ;
-			break ;
 		      case 3: // MATCH (or EQUAL or DIFF)
-			while (nR < nS)
-			  { while (nR) { mLine[iS++] = '.' ; --nR ; --nS ; }
-			    // encode the edit
-			    mLine[iS] = (qual[iS]<20)?tolower(*md++):toupper(*md++) ; ++iS ; --nS ;
-			    
-			    // 4*dna2indexConv[seq[iS++]] + dna2indexConv[*md++] ; --nS ;
-			    while (nM && (*md >= '0' && *md <= '9')) {nR = nR*10 +(*md++ - '0'); --nM; }
+			while (nS)
+			  { while (nS && nR) { mLine[iS++] = '.' ; --nR ; --nS ; }
+			    if (nS && !nR)
+			      { // encode the edit
+				mLine[iS] = (qual[iS]<20)?tolower(*md++):toupper(*md++) ; ++iS ; --nS ;
+				// 4*dna2indexConv[seq[iS++]] + dna2indexConv[*md++] ; --nS ;
+				while (nM && (*md >= '0' && *md <= '9')) {nR = nR*10 +(*md++ - '0'); --nM; }
+			      }
 			  }
 			break ;
 		      }
@@ -460,14 +454,15 @@ static void *b2rThread (void *arg)
   return 0 ;
 }
 
-bool bamMake1read (char *bamOneFileName, char *outFileName)
+bool bamMake1read (char *inFileName, char *outFileName)
 {
   OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
-  OneFile   *ofIn = oneFileOpenRead (bamOneFileName, 0, "bam", NTHREAD) ;
-  if (!ofIn) { warn ("failed to open .1bam file %s", bamOneFileName) ; return false ; }
+  OneFile   *ofIn = oneFileOpenRead (inFileName, 0, "bam", NTHREAD) ;
+  if (!ofIn) { warn ("failed to open .1bam file %s", inFileName) ; return false ; }
   if (!oneFileCheckSchemaText (ofIn, "P 3 seq\nD s 1 3 INT\nD m 1 6 STRING\n"))
     die ("input .1bam file must have s (score) and m (MD) record types") ;
-  OneFile  *ofOut = oneFileOpenWriteNew (outFileName, schema, "read", true, NTHREAD) ;
+  if (!outFileName) outFileName = derivedName (inFileName, "1read") ;
+  OneFile *ofOut = oneFileOpenWriteNew (outFileName, schema, "read", true, NTHREAD) ;
   if (!ofOut) { oneFileClose(ofIn) ; warn ("failed to open %s", outFileName) ; return false ; }
   oneAddProvenance (ofOut, "onebam", "0.1", getCommandLine()) ;
 
