@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 14 10:13 2025 (rd109)
+ * Last edited: Jul 17 10:53 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -343,12 +343,19 @@ typedef struct {
   int bestScore ;
 } TaxInfo ; // info per taxid for this thread
 
+#include <ctype.h>	// for tolower(), toupper()
+
 static void *b2rThread (void *arg)
 {
   B2rThread *ti = (B2rThread*) arg ;
   Array      aTx = arrayCreate (2048, TaxInfo) ;
 
-  int n = 0 ;
+  I64   seqLenMax ; oneStats (ti->ofIn, 'S', 0, &seqLenMax, 0) ;
+  char *mLine = new (seqLenMax, char) ;
+  I32   mScore = -(1<<30) ;
+  char  mMap[128] ; { char  *s = ".-acgtnACGTN", *t = ".-tgcanTGCAN" ; while (*s) mMap[*s++] = *t++ ;  }
+
+  int i, n = 0 ;
   oneGoto (ti->ofIn, 'S', ti->start) ;
   oneReadLine (ti->ofIn) ;
   while (ti->start <= ti->end)
@@ -357,8 +364,9 @@ static void *b2rThread (void *arg)
       char    *seq = oneDNAchar(ti->ofIn), *qual ;
       oneWriteLine (ti->ofOut, 'S', seqLen, seq) ; // write back out the sequence
       Hash     h = hashCreate (8192) ;
-      int      target, txid, score, i ;
+      int      flags, txid, score ;
       TaxInfo *tx ;
+      I64      nCigar, *i64cigar ;
       arrayMax(aTx) = 0 ;
       while (oneReadLine (ti->ofIn) && ti->ofIn->lineType != 'S')
 	switch (ti->ofIn->lineType)
@@ -371,8 +379,8 @@ static void *b2rThread (void *arg)
 	    oneWriteLine (ti->ofOut,'J',oneLen(ti->ofIn),oneString(ti->ofIn)) ;
 	    break ;
 	  case 'B':
-	    target = oneInt(ti->ofIn,1) ;
-	    txid = ti->taxid[oneInt(ti->ofIn,1)] ;
+	    flags  = oneInt(ti->ofIn,0) ;
+	    txid   = ti->taxid[oneInt(ti->ofIn,1)] ;
 	    if (hashAdd (h, hashInt(txid), &i))
 	      { tx = arrayp(aTx,i,TaxInfo) ;
 		tx->txid = txid ; tx->count = 0 ; tx->bestScore = -(1<<30) ;
@@ -380,15 +388,63 @@ static void *b2rThread (void *arg)
 	    else
 	      tx = arrp(aTx,i,TaxInfo) ;
 	    ++tx->count ;
+	    nCigar = oneLen(ti->ofIn) ; i64cigar = oneIntList(ti->ofIn) ;
 	    break ;
 	  case 's':
 	    score = oneInt(ti->ofIn,0) ;
 	    if (score > tx->bestScore) tx->bestScore = score ;
 	    break ;
 	  case 'm':
+	    if (score > mScore) // mScore is best score for the sequence
+	      { mScore = score ;
+		int   nM = oneLen(ti->ofIn) ;
+		char *md = oneString (ti->ofIn) ;
+		// we actually want the edits in the read space, not the reference space
+		// first reconstruct reference string, then map that to the read with cigar
+		// see  https://vincebuffalo.com/notes/2014/01/17/md-tags-in-bam-files.html
+		int iS = 0 ; // position in sequence, reference
+		while (nCigar)
+		  { int nS = bam_cigar_oplen(*i64cigar), op = bam_cigar_op(*i64cigar++) ; --nCigar ;
+		    int nR = 0 ;
+		    while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0') ; --nM ; }
+		    switch (bam_cigar_type(op))
+		      {
+		      case 0: break ; // do nothing
+		      case 1: // DELETE (or REF_SKIP)
+			while (nS--)
+			  { if (nR || nM < 2 || *md++ != '^') die ("bad refmatch") ;
+			    ++md ; nM -= 2 ; // eat up the deleted base
+			  }
+			break ;
+		      case 2: // INSERT (or SOFT_CLIP)
+			for (i = 0 ; i < nS ; ++i) mLine[iS++] = '-' ;
+			break ;
+		      case 3: // MATCH (or EQUAL or DIFF)
+			while (nR < nS)
+			  { while (nR) { mLine[iS++] = '.' ; --nR ; --nS ; }
+			    // encode the edit
+			    mLine[iS] = (qual[iS]<20)?tolower(*md++):toupper(*md++) ; ++iS ; --nS ;
+			    
+			    // 4*dna2indexConv[seq[iS++]] + dna2indexConv[*md++] ; --nS ;
+			    while (nM && (*md >= '0' && *md <= '9')) {nR = nR*10 +(*md++ - '0'); --nM; }
+			  }
+			break ;
+		      }
+		  }
+		if (iS != seqLen) die ("iS %d != seqLen %d", iS, seqLen) ;
+		if (flags & BAM_FREVERSE) // need to reverse-complement mLine
+		  { int i, j ;
+		    for (i = 0, j = seqLen ; i < --j ; ++i)
+		      { char t = mLine[i] ; mLine[i] = mMap[mLine[j]] ; mLine[j] = mMap[t] ; }
+		    if (i == j) mLine[i] = mMap[mLine[i]] ;
+		  }
+	      }
 	    break ;
 	  default: break ;
 	  }
+
+      oneInt(ti->ofOut,0) = mScore ;
+      oneWriteLine (ti->ofOut, 'M', seqLen, mLine) ;
       for (i = 0 ; i < arrayMax(aTx) ; ++i)
 	{ tx = arrp(aTx,i,TaxInfo) ;
 	  oneInt(ti->ofOut,0) = tx->txid ;
@@ -398,6 +454,8 @@ static void *b2rThread (void *arg)
 	}
       hashDestroy (h) ;
     }
+
+  newFree (mLine, seqLenMax, char) ;
   arrayDestroy (aTx) ;
   return 0 ;
 }

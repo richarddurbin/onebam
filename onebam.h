@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 14 10:12 2025 (rd109)
+ * Last edited: Jul 17 10:50 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -40,7 +40,7 @@ static char *schemaText =
   "D Q 1 6 STRING               quality: Q values (ascii string = q+33)\n"
   ". // the following lines for 1read\n"
   "D T 3 3 INT 3 INT 3 INT      TaxID, best score(AS), count of records to this taxid\n"
-  "D M 1 6 STRING               match string: . for match, ACGT for HiQ sub, acgt for lowQ sub, - for delete\n"
+  "D M 2 3 INT 6 STRING         match string: . for match, ACGT for HiQ sub, acgt for lowQ sub, - for delete\n"
   ". // the following lines for 1bam\n"
   "D J 2 3 INT 6 STRING         identifier: updates previous with <STRING> from character <INT>\n"
   "D B 5 3 INT 3 INT 3 INT 3 INT 8 INT_LIST"
