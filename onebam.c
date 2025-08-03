@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 31 00:01 2025 (rd109)
+ * Last edited: Aug  3 20:08 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -62,7 +62,7 @@ static char usage[] =
   "    makebin <taxid.tsv> <XX.bam>  make fixed-width binary files from BAM/SAM/CRAM file\n"
   "      -oTxb <ZZ.txb>                   binary taxid output file - default XX.txb from XX.bam\n"
   "      -oAlb <ZZ.alb>                   binary alignment output file - default XX.alb from XX.bam\n"
-  "      -prefix <n>                      ignore first n characters in names [0]\n"
+  "      -prefixLen <n>                   ignore first n characters in names [0]\n"
   "      -maxChars <n>                    write the next n chars of the name, or all if fewer [48]\n"
   "      -maxEdit <n>                     maximum number of edits for read to be in .alb file [4]\n"
   "    bin21bam <YY.1seq> <XX.bin>   make .1bam file from sorted .bin and .1seq\n"
@@ -127,7 +127,7 @@ int main (int argc, char *argv[])
     }
   else if (!strcmp (command, "makebin"))
     { int   maxEdit = 8 ;
-      int   prefix = 0 ;
+      int   prefixLen = 0 ;
       int   maxChars = 48 ;
       char *outAlbName = 0 ;
       while (argc && **argv == '-')
@@ -135,15 +135,15 @@ int main (int argc, char *argv[])
 	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
 	else if (!strcmp (*argv, "-oAlb") && argc > 1)
 	  { outAlbName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else if (!strcmp (*argv, "-prefix") && argc > 1)
-	  { prefix = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-prefixLen") && argc > 1)
+	  { prefixLen = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
 	else if (!strcmp (*argv, "-maxChars") && argc > 1)
 	  { maxChars = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
 	else if (!strcmp (*argv, "-maxEdit") && argc > 1)
 	  { maxEdit = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
 	else die ("unknown onebam makebin option %s - run without args for usage", *argv) ;
       if (argc != 2) die ("onebam makebin needs 2 not %d args; run without args for usage", argc) ;
-      if (!makeBin (argv[1], outFileName, outAlbName, argv[0], maxEdit, prefix, maxChars))
+      if (!makeBin (argv[1], outFileName, outAlbName, argv[0], maxEdit, prefixLen, maxChars))
 	die ("failed to make binary file from bam file") ;
     }
   else if (!strcmp (command, "bin21bam"))
