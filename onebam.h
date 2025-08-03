@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 17 12:16 2025 (rd109)
+ * Last edited: Jul 24 22:43 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -57,6 +57,8 @@ void setCramReference (char *cramRef) ;
 void auxAdd (char *oneCode, char *spec) ;
 bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool isNames) ;
 bool bamMake1read (char *bamOneFileName, char *outFileName) ;
+bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxidFileName,
+	      int maxEdit, int prefix, int maxChars) ;
 
 typedef struct {
   I32 prefix, suffix ;  // offsets in fixbuf of prefix and suffix

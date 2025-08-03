@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 17 12:22 2025 (rd109)
+ * Last edited: Jul 31 00:01 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -58,10 +58,13 @@ static char usage[] =
   "         NB will read and process fasta[.gz] or BAM/CRAM or even 1seq, as well as fastq[.gz]\n"
   "      -oSeq <ZZ.1seq>                  .1seq output file - default is XX.1seq for input XX.fq\n"
   "      -oFq <ZZ-i.fq[.gz]>              .fq output file - default is XX-i.fq.gz for input XX.fq\n"
-  "      -names                           keep sequence names [default to drop names]\n"
-  "    makebin <taxid.tsv> <XX.bam>  make fixed-width binary file from BAM/SAM/CRAM file\n"
-  "      -o <ZZ.bin>                      output file - default is XX.bin for input XX.1bam\n"
-  "      -maxEdit <n>                     maximum number of edits [8]\n"
+  "      -names                           keep sequence names in .1seq [default to drop names]\n"
+  "    makebin <taxid.tsv> <XX.bam>  make fixed-width binary files from BAM/SAM/CRAM file\n"
+  "      -oTxb <ZZ.txb>                   binary taxid output file - default XX.txb from XX.bam\n"
+  "      -oAlb <ZZ.alb>                   binary alignment output file - default XX.alb from XX.bam\n"
+  "      -prefix <n>                      ignore first n characters in names [0]\n"
+  "      -maxChars <n>                    write the next n chars of the name, or all if fewer [48]\n"
+  "      -maxEdit <n>                     maximum number of edits for read to be in .alb file [4]\n"
   "    bin21bam <YY.1seq> <XX.bin>   make .1bam file from sorted .bin and .1seq\n"
   "      -T <nthreads>                    number of threads [8]\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bin\n"
@@ -109,7 +112,7 @@ int main (int argc, char *argv[])
 	die ("failed to convert .1bam file %s to .1read", *argv) ;
     }
   else if (!strcmp (command, "numberSeq"))
-    { char *outFqName  = 0 ;
+    { char *outFqName = 0 ;
       while (argc && **argv == '-')
 	if (!strcmp (*argv, "-oSeq") && argc > 1)
 	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
@@ -123,15 +126,25 @@ int main (int argc, char *argv[])
 	die ("failed to convert sequence file to .1seq and numbered .fq.gz files") ;
     }
   else if (!strcmp (command, "makebin"))
-    { int maxEdit = 8 ;
+    { int   maxEdit = 8 ;
+      int   prefix = 0 ;
+      int   maxChars = 48 ;
+      char *outAlbName = 0 ;
       while (argc && **argv == '-')
-	if (!strcmp (*argv, "-o") && argc > 1)
+	if (!strcmp (*argv, "-oTxb") && argc > 1)
 	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-oAlb") && argc > 1)
+	  { outAlbName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-prefix") && argc > 1)
+	  { prefix = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-maxChars") && argc > 1)
+	  { maxChars = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
 	else if (!strcmp (*argv, "-maxEdit") && argc > 1)
-	  { maxEdit = atoi (*argv) ; argv += 2 ; argc -= 2 ; }
+	  { maxEdit = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
 	else die ("unknown onebam makebin option %s - run without args for usage", *argv) ;
       if (argc != 2) die ("onebam makebin needs 2 not %d args; run without args for usage", argc) ;
-      die ("makeBin not implemented yet") ;
+      if (!makeBin (argv[1], outFileName, outAlbName, argv[0], maxEdit, prefix, maxChars))
+	die ("failed to make binary file from bam file") ;
     }
   else if (!strcmp (command, "bin21bam"))
     { while (argc && **argv == '-')
