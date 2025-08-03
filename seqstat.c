@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 16 08:12 2025 (rd109)
+ * Last edited: Jul 29 20:29 2025 (rd109)
  * * May 19 09:12 2024 (rd109): renamed composition to seqstat, for consistency
  * Created: Sun Nov 11 17:21:40 2018 (rd109)
  *-------------------------------------------------------------------
@@ -64,8 +64,10 @@ int main (int argc, char *argv[])
   U64 lenMin = 0, lenMax = 0, totLen = 0 ;
   int i ;
   while (seqIOread (si))
-    { char *s = sqioSeq(si), *e = s + si->seqLen ;
-      if (totBase) while (s < e) ++totBase[(int)*s++] ;
+    { if (totBase)
+	{ char *s = sqioSeq(si), *e = s + si->seqLen ;
+	  while (s < e) ++totBase[(int)*s++] ;
+	}
       totLen += si->seqLen ;
       if (si->seqLen > lenMax) lenMax = si->seqLen ;
       if (!lenMin || si->seqLen < lenMin) lenMin = si->seqLen ;
