@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  3 14:04 2025 (rd109)
+ * Last edited: Aug  3 22:54 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -563,25 +563,26 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	{ if (strlen (qName) < prefixLen)
 	    die ("qName %s is shorter than expected prefix len %d", qName, prefixLen) ;
 	  // first .alb header
-	  fputc (0, fAlb) ; fputc ((U8)prefixLen, fAlb) ; fputc ((U8)maxChars, fAlb) ;
-	  int pLen = prefixLen, recordLen = maxChars + 2*maxEdit + 4 - 3 ;
-	  if (pLen > recordLen)
-	    { pLen = recordLen ;
+	  fputc (0, fAlb) ; fputc ((U8)prefixLen, fAlb) ;
+	  fputc ((U8)maxChars, fAlb) ; fputc((U8)maxEdit, fAlb) ;
+	  int pLen = prefixLen, recordSpace = maxChars + 2*maxEdit + 4 - 4 ; // length - 4 fputc
+	  if (pLen > recordSpace)
+	    { pLen = recordSpace ;
 	      warn ("prefixLen %d is longer than header space %d - full prefix not stored",
-		    prefixLen, recordLen) ;
+		    prefixLen, recordSpace) ;
 	    }
 	  if (fwrite (qName, pLen, 1, fAlb) != 1) die ("failed to write .alb header record") ;
-	  while (3 + pLen < recordLen) { fputc (0, fAlb) ; ++pLen ; }
+	  recordSpace -= pLen ; while (recordSpace--) fputc (0, fAlb) ; // pad out rest of record
 	  // now write .txb header
 	  fputc (0, fTxb) ; fputc ((U8)prefixLen, fTxb) ; fputc ((U8)maxChars, fTxb) ;
-	  pLen = prefixLen ; recordLen = maxChars + (int)sizeof(TaxInfo) ;
-	  if (pLen > recordLen)
-	    { pLen = recordLen ;
+	  pLen = prefixLen ; recordSpace = maxChars + (int)sizeof(TaxInfo) - 3 ; // 3 fputc's here
+	  if (pLen > recordSpace)
+	    { pLen = recordSpace ;
 	      warn ("prefixLen %d is longer than header space %d - full prefix not stored",
-		    prefixLen, recordLen) ;
+		    prefixLen, recordSpace) ;
 	    }
 	  if (fwrite (qName, pLen, 1, fTxb) != 1) die ("failed to write .txb header record") ;
-	  while (3 + pLen < recordLen) { fputc (0, fTxb) ; ++pLen ; }
+	  recordSpace -= pLen ; while (recordSpace--) fputc (0, fAlb) ; // pad out rest of record
 	}
       
       if (strcmp (lastqName, qName)) // new query sequence
