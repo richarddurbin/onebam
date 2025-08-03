@@ -5,7 +5,7 @@
  * Description: buffered package to read arbitrary sequence files - much faster than readseq
  * Exported functions:
  * HISTORY:
- * Last edited: Jan  6 11:22 2025 (rd109)
+ * Last edited: Jul 29 20:29 2025 (rd109)
  * * Dec 15 09:45 2022 (rd109): separated out 2bit packing/unpacking into SeqPack
  * Created: Fri Nov  9 00:21:21 2018 (rd109)
  *-------------------------------------------------------------------
@@ -694,7 +694,8 @@ U8* seqPackRevComp (SeqPack *sp, char *s, U8 *u, U64 len) /* packs the RC of the
 
 char* seqUnpack (SeqPack *sp, U8 *u, char *s, U64 i, U64 len)
 {
-  if (!s) s = (*sp->unconv >= 'A') ? new0 (len+1,char) : new(len,char) ;
+  if (!s) s = (*sp->unconv >= 'A') ? new(len+1,char) : new(len,char) ;
+  if (*sp->unconv >= 'A') s[len] = 0 ; // 0-terminate if alphabetical
   char *s0 = s ;
   u += (i >> 2) ; i = (i & 3) ; // first offset and go to byte (U8) boundary
   if (i)
@@ -720,9 +721,9 @@ char* seqUnpack (SeqPack *sp, U8 *u, char *s, U64 i, U64 len)
 
 char* seqUnpackRevComp (SeqPack *sp, U8 *u, char *s, U64 i, U64 len)
 {
-  if (!s) s = (*sp->unconv >= 'A') ? new0 (len+1,char) : new(len,char) ;
-  char *s0 = s ;
-  s += len ;
+  if (!s) s = (*sp->unconv >= 'A') ? new(len+1,char) : new(len,char) ;
+  if (*sp->unconvC >= 'A') s[len] = 0 ; // 0-terminate if alphabetical
+  char *s0 = s+len ;
   u += (i >> 2) ; i = (i & 3) ; // first offset and go to byte (U8) boundary
   if (i)
     { U8 uu = *u >> 2*i ;
@@ -1163,16 +1164,21 @@ bool bamRead (SeqIO *si)
   
   if (si->isQual)
     { char *bq = (char*) bam_get_qual (bf->b) ;
-      if (*bq == '\xff') bzero (si->qualBuf, si->seqLen) ;
-      else if (bf->b->core.flag & BAM_FREVERSE)
-	{ char *q = si->qualBuf + si->seqLen ;
-	  while (q-- > si->qualBuf) *q = *bq ;
-	}
+      if (*bq == '\xff') memset (si->qualBuf, 0, si->seqLen) ;
+      // else if (bf->b->core.flag & BAM_FREVERSE)
+      //   { char *q = si->qualBuf + si->seqLen ;
+      //      while (q-- > si->qualBuf) *q = *bq ;
+      //   }
       else
 	memcpy (si->qualBuf, bq, si->seqLen) ;
     }
 
-  // NB bam_get_qname(bf->b) returns the sequence name
+  char *qName = bam_get_qname(bf->b) ;
+  si->idLen = bf->b->core.l_qname - bf->b->core.l_extranul ;
+  while (si->idLen + si->descLen + 2 > si->bufSize) bufDouble (si) ;
+  si->idStart = 0 ; strcpy (si->buf, qName) ;
+  si->descStart = si->idLen+1 ;
+  si->descLen = 0 ; si->descStart = si->idLen ;
 
   ++si->nSeq ;
   return true ;
