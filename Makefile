@@ -5,7 +5,7 @@ CFLAGS = -O3
 
 LIBS = -lpthread
 
-ALL = onebam ONEview ONEstat seqstat
+ALL = onebam ONEview ONEstat seqstat albview
 
 DESTDIR = ~/bin
 
@@ -53,6 +53,9 @@ ONEstat: ONEstat.c ONElib.o
 
 seqstat: seqstat.c seqio.o ONElib.o $(UTILS_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(SEQIO_LIBS) $(HTS_LIBS) $(LIBS)
+
+albview: albview.c $(UTILS_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ -lz
 
 ### test
 
