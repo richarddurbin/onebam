@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  3 23:31 2025 (rd109)
+ * Last edited: Aug  4 15:33 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -59,7 +59,7 @@ static char usage[] =
   "      -oAlb <ZZ.alb>                   binary alignment output file - default XX.alb from XX.bam\n"
   "      -prefixLen <n>                   ignore first n characters in names [0]\n"
   "      -maxChars <n>                    write the next n chars of the name, or all if fewer [48]\n"
-  "      -maxEdit <n>                     maximum number of edits for read to be in .alb file [4]\n"
+  "      -maxEdit <n>                     maximum number of edits for read to be in .alb file [8]\n"
   "    bin21read <XX>                make .1read file from sorted binary XX.alb and XX.txb files\n"
   "      -T <nthreads>                    number of threads [8]\n"
   "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.{alb,txb}\n"
