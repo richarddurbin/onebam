@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 16:14 2025 (rd109)
+ * Last edited: Aug  4 18:34 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -539,11 +539,11 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   char   RC[128] ; { char  *s = ".-acgtnACGTN", *t = ".-tgcanTGCAN" ; while (*s) RC[*s++] = *t++ ; }
   Hash   hTx           = hashCreate (8192) ;
   Array  aTx           = arrayCreate (2048, TaxInfo) ;
-  char  *nameBuf       = new (maxChars, char) ;
+  char  *nameBuf       = new (maxChars+1, char) ;
   U8    *edits         = new (2*maxEdit+4, U8) ;
   I32   *maxScore      = (I32*)(edits + 2*maxEdit) ; *maxScore = -(1<<30) ;
   // sticking maxScore at the end of edits removes an fwrite() call
-  I64    seqLen ;
+  U64    seqLen ;
   bool   isFirst       = true ;
   
   I64 nRecord = 0, nTxb = 0, nAlb = 0 ;
@@ -566,7 +566,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	  // first .alb header
 	  fputc (0, fAlb) ; fputc ((U8)prefixLen, fAlb) ;
 	  fputc ((U8)maxChars, fAlb) ; fputc((U8)maxEdit, fAlb) ;
-	  int pLen = prefixLen, recordSpace = maxChars + 2*maxEdit + 4 - 4 ; // length - 4 fputc
+	  int pLen = prefixLen, recordSpace = maxChars + 2*maxEdit + 5 - 4 ; // length - 4 fputc
 	  if (pLen > recordSpace)
 	    { pLen = recordSpace ;
 	      warn ("prefixLen %d is longer than header space %d - full prefix not stored",
@@ -588,7 +588,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	}
       
       if (strcmp (lastqName, qName)) // new query sequence
-	{ memset (nameBuf, 0, maxChars) ;
+	{ memset (nameBuf, 0, maxChars+1) ;
 	  if (strlen(lastqName) > prefixLen) strncpy (nameBuf, lastqName+prefixLen, maxChars) ;
 	  if (*maxScore > -(1<<30))  // report it - NB it will not be on the first record
 	    { U8 nE = 0 ; // number of edits
@@ -643,7 +643,8 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 		    }
 		}
 	      if (iS != seqLen) die ("record %d: iS %d != seqLen %d", (int)nRecord, iS, seqLen) ;
-	      size_t ret = fwrite (nameBuf, maxChars, 1, fAlb) ;
+	      nameBuf[maxChars] = (char)((seqLen > 255) ? 255 : seqLen) ;
+	      size_t ret = fwrite (nameBuf, maxChars+1, 1, fAlb) ;
 	      if (ret != 1) die ("failed name write to .alb - ret %d ferror %d", ret, ferror(fAlb)) ;
 	      ret = fwrite (edits, 2*maxEdit+4, 1, fAlb) ;
 	      if (ret != 1) die ("failed data write to .alb - ret %d ferror %d", ret, ferror(fAlb)) ;
@@ -666,12 +667,12 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 
 	  seqLen = bf->b->core.l_qseq ;
 	  ENSURE_BUF_SIZE (seq, seqBufSize, seqLen+1, char) ;
-	  char *s, *bseq = (char*) bam_get_seq (bf->b) ;
+	  char *s = seq, *bseq = (char*) bam_get_seq (bf->b) ;
 	  if (flags & BAM_FREVERSE)
-	    for (i = seqLen, s = seq ; i-- ; )
+	    for (i = seqLen ; i-- ; )
 	      *s++ = binaryAmbigComplement[(int)bam_seqi(bseq,i)] ;
 	  else
-	    for (i = 0, s = seq ; i < seqLen ; ++i)
+	    for (i = 0 ; i < seqLen ; ++i)
 	      *s++ = bam_seqi(bseq,i) ;
 	} // end of new query sequence block
 
