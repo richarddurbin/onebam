@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 09:36 2025 (rd109)
+ * Last edited: Aug  4 09:58 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -110,7 +110,7 @@ void auxAdd (char *oneCode, char *spec)
 
 static int accOrder (void *names, const void *a, const void *b)
 { return strcmp(((char**)names)[*(int*)a], ((char**)names)[*(int*)b]) ; }
-#if (!defined(_GNU_SOURCE) && FALSE)
+#if !defined(QSORT_R)
 static void *qsort_arg ;
 static int accOrderBare  (const void *a, const void *b)
 { return strcmp(((char**)qsort_arg)[*(int*)a], ((char**)qsort_arg)[*(int*)b]) ; }
