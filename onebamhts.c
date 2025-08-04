@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  3 22:54 2025 (rd109)
+ * Last edited: Aug  4 09:36 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -503,6 +503,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   if (!(fAlb = fopen (outAlbName, "wb")))
     { warn ("failed to open %s to write", outAlbName) ; fclose (fTxb) ; return false ; }
 
+  printf ("about to open bam file %s\n", bamFileName) ;
   BamFile *bf = bamFileOpenRead (bamFileName) ;
   if (!bf) { fclose (fTxb) ; fclose (fAlb) ; return false ; }
   int nTargets = bf->h->n_targets ;
