@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 09:58 2025 (rd109)
+ * Last edited: Aug  4 10:06 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -114,7 +114,7 @@ static int accOrder (void *names, const void *a, const void *b)
 static void *qsort_arg ;
 static int accOrderBare  (const void *a, const void *b)
 { return strcmp(((char**)qsort_arg)[*(int*)a], ((char**)qsort_arg)[*(int*)b]) ; }
-static void qsort_r(void *base, size_t n, size_t size, void *arg, int (*comp)(const void *, const void *, void *))
+static void qsort_r(void *base, size_t n, size_t size, void *arg, int (*comp)(void *, const void *, const void *))
 { qsort_arg = arg ; qsort (base, n, size, accOrderBare) ; }
 #endif
 
