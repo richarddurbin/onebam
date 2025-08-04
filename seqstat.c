@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Jul 29 20:29 2025 (rd109)
+ * Last edited: Aug  4 09:34 2025 (rd109)
  * * May 19 09:12 2024 (rd109): renamed composition to seqstat, for consistency
  * Created: Sun Nov 11 17:21:40 2018 (rd109)
  *-------------------------------------------------------------------
@@ -49,7 +49,7 @@ int main (int argc, char *argv[])
     else if (!strcmp (*argv, "-q")) { totQual = new0 (256, U64) ; --argc ; ++argv ; }
     else if (!strcmp (*argv, "-t")) { isTime = true ; --argc ; ++argv ; }
     else if (!strcmp (*argv, "-l"))
-      { lengthCount = arrayCreate (10000, int) ;
+      { lengthCount = arrayCreate (10000, U64) ;
 	lengthSum = arrayCreate (10000, U64) ;
 	--argc ; ++argv ;
       }
@@ -73,7 +73,7 @@ int main (int argc, char *argv[])
       if (!lenMin || si->seqLen < lenMin) lenMin = si->seqLen ;
       if (lengthCount)
 	{ i = 10.*sqrt((double)si->seqLen) ;
-	  ++array(lengthCount, i, int) ; array(lengthSum, i, U64) += si->seqLen ;
+	  ++array(lengthCount, i, U64) ; array(lengthSum, i, U64) += si->seqLen ;
 	}
       if (totQual && si->isQual)
 	{ char *q = sqioQual(si), *e = q + si->seqLen ;
@@ -122,12 +122,12 @@ int main (int argc, char *argv[])
 	    tot50 += arr(lengthSum, i, U64) ;
 	  printf ("approximate N50 %ld\n", ((long)i*(long)(i+1))/100) ;
 	  printf ("length distribution (quadratic bins)\n") ;
-	  int s = 0 ;
+	  U64 s = 0 ;
 	  int d = arrayMax(lengthCount) / 20 ;
 	  for (i = 0 ; i < arrayMax(lengthCount) ; ++i)
-	    { s += arr(lengthCount, i, int) ;
+	    { s += arr(lengthCount, i, U64) ;
 	      if (s && !((arrayMax(lengthCount)-1-i) % d))
-		{ printf ("  %lld\t%d\n", (i*(U64)i)/100, s) ;
+		{ printf ("  %lld\t%lld\n", (i*(U64)i)/100, s) ;
 		  s = 0 ;
 		}
 	    }
