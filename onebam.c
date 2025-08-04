@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  3 20:08 2025 (rd109)
+ * Last edited: Aug  3 23:31 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -51,27 +51,30 @@ static char usage[] =
   "         NB you must use '-aux AS:i s -aux MD:Z m' if you plant to use your .1bam to make .1read\n"
   "      -names                           keep sequence names [default to drop names]\n"
   "      -cramref <file_name|URL>         reference for CRAM - needed to read cram\n"
-  "    make1read <XX.1bam>           convert .1bam file to .1read (simplified information per read)\n"
+  "    1bam21read <XX.1bam           convert .1bam file to .1read (simplified information per read)\n"
   "      -T <nthreads>                    number of threads [8]\n"
   "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
-  "    numberSeq <XX.fq[.gz]>        make .1seq file from fq, plus new fq file with ints for names\n"
-  "         NB will read and process fasta[.gz] or BAM/CRAM or even 1seq, as well as fastq[.gz]\n"
-  "      -oSeq <ZZ.1seq>                  .1seq output file - default is XX.1seq for input XX.fq\n"
-  "      -oFq <ZZ-i.fq[.gz]>              .fq output file - default is XX-i.fq.gz for input XX.fq\n"
-  "      -names                           keep sequence names in .1seq [default to drop names]\n"
-  "    makebin <taxid.tsv> <XX.bam>  make fixed-width binary files from BAM/SAM/CRAM file\n"
+  "    makebin <taxid.tsv> <XX.bam>  make fixed-width .alb and .txb binary files from bam file\n"
   "      -oTxb <ZZ.txb>                   binary taxid output file - default XX.txb from XX.bam\n"
   "      -oAlb <ZZ.alb>                   binary alignment output file - default XX.alb from XX.bam\n"
   "      -prefixLen <n>                   ignore first n characters in names [0]\n"
   "      -maxChars <n>                    write the next n chars of the name, or all if fewer [48]\n"
   "      -maxEdit <n>                     maximum number of edits for read to be in .alb file [4]\n"
+  "    bin21read <XX>                make .1read file from sorted binary XX.alb and XX.txb files\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.{alb,txb}\n"
+#ifndef HIDE
   "    bin21bam <YY.1seq> <XX.bin>   make .1bam file from sorted .bin and .1seq\n"
   "      -T <nthreads>                    number of threads [8]\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bin\n"
-  "    bin21read <YY.1seq> <XX.bin>  make .1read file from sorted .bin and .1seq\n"
-  "      -T <nthreads>                    number of threads [8]\n"
-  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.bin\n" ;
-
+  "    numberSeq <XX.fq[.gz]>        make .1seq file from fq, plus new fq file with ints for names\n"
+  "         NB will read and process fasta[.gz] or BAM/CRAM or even 1seq, as well as fastq[.gz]\n"
+  "      -oSeq <ZZ.1seq>                  .1seq output file - default is XX.1seq for input XX.fq\n"
+  "      -oFq <ZZ-i.fq[.gz]>              .fq output file - default is XX-i.fq.gz for input XX.fq\n"
+  "      -names                           keep sequence names in .1seq [default to drop names]\n"
+#endif
+  ;
+  
 int main (int argc, char *argv[])
 {
   timeUpdate (0) ;
