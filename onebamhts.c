@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 10:06 2025 (rd109)
+ * Last edited: Aug  4 16:14 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -272,36 +272,37 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
 	}
 
       // now do any requested aux fields
-      for (i = 0 ; i < arrayMax(auxFields) ; ++i)
-	{ AuxField *a = arrp(auxFields,i,AuxField) ;
-	  U8 *aux ; 
-	  if ((aux = bam_aux_get (bf->b, a->tag)))
-	    switch (a->fmt)
-	      {
-	      case 'A':
-		oneChar(of,0) = bam_aux2A(aux) ; oneWriteLine (of, a->oneCode, 0, 0) ; break ;
-	      case 'C': case 'c':
-	      case 'S': case 's':
-	      case 'I': case 'i':
-		oneInt(of,0) = bam_aux2i(aux) ; oneWriteLine (of, a->oneCode, 0, 0) ; break ;
-	      case 'f':
-		oneReal(of,0) = bam_aux2f(aux) ; oneWriteLine (of, a->oneCode, 0, 0) ; break ;
-	      case 'Z': case 'H':
-		s = bam_aux2Z(aux) ; oneWriteLine (of, a->oneCode, strlen(s), s) ; break ;
-	      case 'D': case 'd':
-	      case 'T': case 't':
-	      case 'J': case 'j':
-		{ I64 len = bam_auxB_len(aux) ; ENSURE_BUF_SIZE (iBuf, iBufSize, len, I64) ;
-		  for (i = 0 ; i < len ; ++i) iBuf[i] = bam_auxB2i(aux,i) ;
-		  oneWriteLine (of, a->oneCode, len, iBuf) ; break ;
+      if (auxFields)
+	for (i = 0 ; i < arrayMax(auxFields) ; ++i)
+	  { AuxField *a = arrp(auxFields,i,AuxField) ;
+	    U8 *aux ; 
+	    if ((aux = bam_aux_get (bf->b, a->tag)))
+	      switch (a->fmt)
+		{
+		case 'A':
+		  oneChar(of,0) = bam_aux2A(aux) ; oneWriteLine (of, a->oneCode, 0, 0) ; break ;
+		case 'C': case 'c':
+		case 'S': case 's':
+		case 'I': case 'i':
+		  oneInt(of,0) = bam_aux2i(aux) ; oneWriteLine (of, a->oneCode, 0, 0) ; break ;
+		case 'f':
+		  oneReal(of,0) = bam_aux2f(aux) ; oneWriteLine (of, a->oneCode, 0, 0) ; break ;
+		case 'Z': case 'H':
+		  s = bam_aux2Z(aux) ; oneWriteLine (of, a->oneCode, strlen(s), s) ; break ;
+		case 'D': case 'd':
+		case 'T': case 't':
+		case 'J': case 'j':
+		  { I64 len = bam_auxB_len(aux) ; ENSURE_BUF_SIZE (iBuf, iBufSize, len, I64) ;
+		    for (i = 0 ; i < len ; ++i) iBuf[i] = bam_auxB2i(aux,i) ;
+		    oneWriteLine (of, a->oneCode, len, iBuf) ; break ;
+		  }
+		case 'g':
+		  { I64 len = bam_auxB_len(aux) ; ENSURE_BUF_SIZE (fBuf, fBufSize, len, float) ;
+		    for (i = 0 ; i < len ; ++i) fBuf[i] = bam_auxB2f(aux,i) ;
+		    oneWriteLine (of, a->oneCode, len, fBuf) ; break ;
+		  }
 		}
-	      case 'g':
-		{ I64 len = bam_auxB_len(aux) ; ENSURE_BUF_SIZE (fBuf, fBufSize, len, float) ;
-		  for (i = 0 ; i < len ; ++i) fBuf[i] = bam_auxB2f(aux,i) ;
-		  oneWriteLine (of, a->oneCode, len, fBuf) ; break ;
-		}
-	      }
-	}
+	  }
     }
   printf ("processed %lld records\n", (long long) nRecord) ;
   
@@ -503,7 +504,6 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   if (!(fAlb = fopen (outAlbName, "wb")))
     { warn ("failed to open %s to write", outAlbName) ; fclose (fTxb) ; return false ; }
 
-  printf ("about to open bam file %s\n", bamFileName) ;
   BamFile *bf = bamFileOpenRead (bamFileName) ;
   if (!bf) { fclose (fTxb) ; fclose (fAlb) ; return false ; }
   int nTargets = bf->h->n_targets ;
@@ -583,7 +583,8 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 		    prefixLen, recordSpace) ;
 	    }
 	  if (fwrite (qName, pLen, 1, fTxb) != 1) die ("failed to write .txb header record") ;
-	  recordSpace -= pLen ; while (recordSpace--) fputc (0, fAlb) ; // pad out rest of record
+	  recordSpace -= pLen ; while (recordSpace--) fputc (0, fTxb) ; // pad out rest of record
+	  isFirst = false ;
 	}
       
       if (strcmp (lastqName, qName)) // new query sequence
