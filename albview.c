@@ -5,12 +5,14 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 15:39 2025 (rd109)
+ * Last edited: Aug  4 17:41 2025 (rd109)
  * Created: Mon Aug  4 13:43:40 2025 (rd109)
  *-------------------------------------------------------------------
  */
 
 #include "utils.h"
+
+static const char binary2char[] = "-ACMGRSVTWYHKDBN" ;
 
 int main (int argc, char *argv[])
 {
@@ -21,7 +23,7 @@ int main (int argc, char *argv[])
   U8 b ;
   if ((b = fgetc(f)) != 0) die ("first byte %d of input is non-zero", b) ;
   int prefixLen = (U8)fgetc(f), maxChars = (U8)fgetc(f), maxEdit = (U8)fgetc(f) ;
-  int recordLen = maxChars + 2*maxEdit + 4 ;
+  int recordLen = maxChars + 2*maxEdit + 5 ;
   char *prefix = malloc (prefixLen+1) ;
   int z = (prefixLen <= recordLen - 4) ? prefixLen : recordLen - 4 ;
   if (fread (prefix, z, 1, f) != 1) die ("failed to read prefix") ;
@@ -33,7 +35,18 @@ int main (int argc, char *argv[])
   U64 nRecord = 0 ;
   while ((fread(buf,recordLen,1,f) == 1))
     { ++nRecord ;
-      
+      if (nRecord < 10)
+	{ int seqLen = ((U8*)buf)[maxChars] ;
+	  int score = (int)*(I32*)(buf+maxChars+1+2*maxEdit) ;
+	  printf ("%-*.*s len %3d score %3d", prefixLen, prefixLen, buf, seqLen, score) ;
+	  for (i = 0 ; i < maxEdit ; ++i)
+	    { U8 pos = (U8)buf[prefixLen+1+2*i] ;
+	      U8 x = (U8)buf[prefixLen+1+2*i+1] ;
+	      if (!pos && !x) break ;
+	      printf (" %d:%c>%c", pos, binary2char[x >> 4], binary2char[x & 0xf]) ;
+	    }
+	  putchar ('\n') ;
+	}
     }
   if (!feof(f)) die ("failed to read after record %llu while not at end of file", nRecord) ;
   printf ("read %llu records\n", nRecord) ;
