@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 15:33 2025 (rd109)
+ * Last edited: Aug  4 17:37 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -104,7 +104,7 @@ int main (int argc, char *argv[])
       if (!bam21bam (*argv, outFileName, taxidFileName, isNames))
 	  die ("failed to convert bam file %s", *argv) ;
     }
-  else if (!strcmp (command, "make1read"))
+  else if (!strcmp (command, "1bam21read"))
     { while (argc && **argv == '-')
 	if (!strcmp (*argv, "-T") && argc > 1) { NTHREAD = atoi(argv[1]) ; argc -= 2 ; argv += 2 ; }
 	else if (!strcmp (*argv, "-o") && argc > 1)
