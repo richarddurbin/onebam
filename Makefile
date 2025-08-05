@@ -37,12 +37,15 @@ ONElib.o: ONElib.c ONElib.h
 onebamhts.o: onebamhts.c onebam.h
 	$(CC) $(CFLAGS) $(HTS_OPTS) -c $^
 
+albcode.o: albcode.c onebam.h
+	$(CC) $(CFLAGS) $(HTS_OPTS) -c $^
+
 seqio.o: seqio.c seqio.h
 	$(CC) $(CFLAGS) $(SEQIO_OPTS) -c $^
 
 ### programs
 
-onebam: onebam.c onebamhts.o seqio.o ONElib.o $(UTILS_OBJS)
+onebam: onebam.c onebamhts.o seqio.o albcode.o ONElib.o $(UTILS_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(SEQIO_LIBS) $(HTS_LIBS) $(LIBS)
 
 ONEview: ONEview.c ONElib.o

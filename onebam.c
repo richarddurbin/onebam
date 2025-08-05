@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 17:37 2025 (rd109)
+ * Last edited: Aug  4 23:30 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -45,28 +45,32 @@ static char usage[] =
   "  commands with arguments, each followed by their options:\n"
   "    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bam\n"
-  "      -taxid <XX.tsv>                 file with lines <acc>\\ttaxid\\n sorted on acc\n"
+  "      -taxid <XX.tsv>                  file with lines <acc>\\ttaxid\\n sorted on acc\n"
   "         NB you must give taxids if you plan to use your .1bam to make .1read\n"              
   "      -aux <tag>:<fmt> <char>          record BAM tag with OneCode <char>, e.g. -aux AS:i s\n"
   "         NB you must use '-aux AS:i s -aux MD:Z m' if you plant to use your .1bam to make .1read\n"
   "      -names                           keep sequence names [default to drop names]\n"
   "      -cramref <file_name|URL>         reference for CRAM - needed to read cram\n"
-  "    1bam21read <XX.1bam           convert .1bam file to .1read (simplified information per read)\n"
-  "      -T <nthreads>                    number of threads [8]\n"
-  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
+  "    1bam2bam <XX.1bam>            back-convert .1bam to .bam\n"
+  "      -o <ZZ.bam>                      output file - default is XX.bam for input XX.1bam\n"
   "    makebin <taxid.tsv> <XX.bam>  make fixed-width .alb and .txb binary files from bam file\n"
   "      -oTxb <ZZ.txb>                   binary taxid output file - default XX.txb from XX.bam\n"
   "      -oAlb <ZZ.alb>                   binary alignment output file - default XX.alb from XX.bam\n"
   "      -prefixLen <n>                   ignore first n characters in names [0]\n"
   "      -maxChars <n>                    write the next n chars of the name, or all if fewer [48]\n"
   "      -maxEdit <n>                     maximum number of edits for read to be in .alb file [8]\n"
-  "    bin21read <XX>                make .1read file from sorted binary XX.alb and XX.txb files\n"
-  "      -T <nthreads>                    number of threads [8]\n"
-  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.{alb,txb}\n"
+  "    albReport <XX.alb>            report edit (damage) distribution etc. from .alb file\n"
+  "      -o <filename>                    write the report to filenam - default is stdout\n"
 #ifndef HIDE
+  "    1bam21read <XX.1bam>          convert .1bam file to .1read (simplified information per read)\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
   "    bin21bam <YY.1seq> <XX.bin>   make .1bam file from sorted .bin and .1seq\n"
   "      -T <nthreads>                    number of threads [8]\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bin\n"
+  "    bin21read <XX>                make .1read file from sorted binary XX.alb and XX.txb files\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.{alb,txb}\n"
   "    numberSeq <XX.fq[.gz]>        make .1seq file from fq, plus new fq file with ints for names\n"
   "         NB will read and process fasta[.gz] or BAM/CRAM or even 1seq, as well as fastq[.gz]\n"
   "      -oSeq <ZZ.1seq>                  .1seq output file - default is XX.1seq for input XX.fq\n"
@@ -148,6 +152,14 @@ int main (int argc, char *argv[])
       if (argc != 2) die ("onebam makebin needs 2 not %d args; run without args for usage", argc) ;
       if (!makeBin (argv[1], outFileName, outAlbName, argv[0], maxEdit, prefixLen, maxChars))
 	die ("failed to make binary file from bam file") ;
+    }
+  else if (!strcmp (command, "albReport"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam albReport option %s - run without args for usage", *argv) ;
+      if (argc != 1) die ("onebam albReport needs 1 not %d args; run without args for usage",argc) ;
+      albReport (*argv, outFileName) ;
     }
   else if (!strcmp (command, "bin21bam"))
     { while (argc && **argv == '-')
