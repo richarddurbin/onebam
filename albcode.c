@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  5 15:17 2025 (rd109)
+ * Last edited: Aug  6 23:41 2025 (rd109)
  * Created: Mon Aug  4 19:34:03 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -97,7 +97,7 @@ void albReport (char *albFileName, char *outFileName)
       double mean = sum/(double)nRecord ;
       fprintf (fOut, "LENGTHS min %d max %d mean %.1f n50 %d\n", min, max, mean, n50) ;
       fprintf (fOut, "EDITS") ;
-      for (i = 0 ; i < maxEdit ; ++i) fprintf (fOut, " %llu", edits[i]) ;
+      for (i = 0 ; i <= maxEdit ; ++i) fprintf (fOut, " %llu", edits[i]) ;
       fprintf (fOut, "\n") ;
       double ct, ga, other ;
       for (i = 0 ; i < 15 ; ++i)
