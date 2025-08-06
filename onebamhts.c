@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 18:34 2025 (rd109)
+ * Last edited: Aug  6 14:50 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -504,10 +504,25 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   if (!(fAlb = fopen (outAlbName, "wb")))
     { warn ("failed to open %s to write", outAlbName) ; fclose (fTxb) ; return false ; }
 
+#ifdef TEST
+  printf ("about to open bamFile: ") ; timeUpdate(stdout) ;
+#endif
+  
   BamFile *bf = bamFileOpenRead (bamFileName) ;
   if (!bf) { fclose (fTxb) ; fclose (fAlb) ; return false ; }
   int nTargets = bf->h->n_targets ;
   printf ("opened %s and read %d references: ", bamFileName, nTargets) ; timeUpdate (stdout) ;
+
+#ifdef TEST
+  int res = sam_read1 (bf->f, bf->h, bf->b) ;
+  char *qName = bam_get_qname(bf->b) ;
+  printf ("%s \n", qName) ;
+  int len = bf->b->core.l_qseq ;
+  char *bseq = (char*) bam_get_seq (bf->b) ;
+  int ii ; for (ii = 0 ; ii < len ; ++ii) putchar (binary2char[bseq[ii]]) ;
+  putchar ('\n') ;
+  return true ;
+#endif
   
   // deal with the targets - first sort them, allowing for tid 0 = * (no target)
   int i, *revMap = new(nTargets,int) ;
