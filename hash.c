@@ -20,7 +20,7 @@
  * -------------------------------------------------------------------
  * Exported functions:
  * HISTORY:
- * Last edited: Mar  4 01:41 2025 (rd109)
+ * Last edited: Aug  6 23:39 2025 (rd109)
  * Created: Fri Jan  7 09:20:25 2011 (rd)
  *-------------------------------------------------------------------
  */
@@ -127,7 +127,9 @@ void hashClear (Hash hx)
   TrueHash *h = (TrueHash*) hx ;
   h->n = 0 ;
   memset (h->keys, 0, sizeof(I64)*(1 << h->nbits)) ;
+  h->guard = (1 << (h->nbits - 1)) ;
   h->freeList = arrayReCreate (h->freeList, 32, int) ;
+  h->nFree = 0 ;
 }
 
 /********************/
