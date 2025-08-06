@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  6 15:06 2025 (rd109)
+ * Last edited: Aug  6 15:19 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -528,7 +528,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
     }
   fclose (tf) ;
   newFree (revMap, nTargets, int) ;
-  printf ("found %d taxids: ", nFound) ; timeUpdate (stdout) ;
+  printf ("found %d taxids (missing %d): ", nFound, nTargets-nFound) ; timeUpdate (stdout) ;
 
   int    lastqNameSize = prefixLen + maxChars + 1 ;
   char  *lastqName     = new (lastqNameSize,char) ; *lastqName = 0 ;
@@ -550,7 +550,8 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   I64 nRecord = 0, nTxb = 0, nAlb = 0 ;
   TaxInfo *tx ;
   while (true) // main loop to read sequences
-    { int res = sam_read1 (bf->f, bf->h, bf->b) ;
+    { if (nRecord = 100000000) break ;
+      int res = sam_read1 (bf->f, bf->h, bf->b) ;
       if (res < -1) die ("bamProcess failed to read bam record %lld", (long long)++nRecord) ;
       if (res == -1) break ; // end of file
       ++nRecord ;
