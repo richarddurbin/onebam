@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  6 14:50 2025 (rd109)
+ * Last edited: Aug  6 15:06 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -503,31 +503,17 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   if (!outAlbName) outAlbName = derivedName (bamFileName, "alb") ;
   if (!(fAlb = fopen (outAlbName, "wb")))
     { warn ("failed to open %s to write", outAlbName) ; fclose (fTxb) ; return false ; }
-
-#ifdef TEST
-  printf ("about to open bamFile: ") ; timeUpdate(stdout) ;
-#endif
   
   BamFile *bf = bamFileOpenRead (bamFileName) ;
   if (!bf) { fclose (fTxb) ; fclose (fAlb) ; return false ; }
   int nTargets = bf->h->n_targets ;
-  printf ("opened %s and read %d references: ", bamFileName, nTargets) ; timeUpdate (stdout) ;
-
-#ifdef TEST
-  int res = sam_read1 (bf->f, bf->h, bf->b) ;
-  char *qName = bam_get_qname(bf->b) ;
-  printf ("%s \n", qName) ;
-  int len = bf->b->core.l_qseq ;
-  char *bseq = (char*) bam_get_seq (bf->b) ;
-  int ii ; for (ii = 0 ; ii < len ; ++ii) putchar (binary2char[bseq[ii]]) ;
-  putchar ('\n') ;
-  return true ;
-#endif
+  printf ("opened %s and read %d target names: ", bamFileName, nTargets) ; timeUpdate (stdout) ;
   
   // deal with the targets - first sort them, allowing for tid 0 = * (no target)
   int i, *revMap = new(nTargets,int) ;
   for (i = 0 ; i < nTargets ; ++i) revMap[i] = i ;
   qsort_r (revMap, nTargets, sizeof(int), bf->h->target_name, accOrder) ;
+  printf ("sorted the targets: ") ; timeUpdate (stdout) ;
   // next merge the targets to the taxid file to identify the taxids
   int *taxid = new0(nTargets+1,int) ;
   FILE *tf = fzopen (taxidFileName, "r") ;
@@ -587,7 +573,8 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	      warn ("prefixLen %d is longer than header space %d - full prefix not stored",
 		    prefixLen, recordSpace) ;
 	    }
-	  if (fwrite (qName, pLen, 1, fAlb) != 1) die ("failed to write .alb header record") ;
+	  if (fwrite (qName, pLen, 1, fAlb) != 1)
+	    die ("failed to write .alb header record length %d", pLen) ;
 	  recordSpace -= pLen ; while (recordSpace--) fputc (0, fAlb) ; // pad out rest of record
 	  // now write .txb header
 	  fputc (0, fTxb) ; fputc ((U8)prefixLen, fTxb) ; fputc ((U8)maxChars, fTxb) ;
