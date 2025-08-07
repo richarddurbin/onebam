@@ -2,10 +2,10 @@
  *  Author: Richard Durbin (rd109@cam.ac.uk)
  *  Copyright (C) Richard Durbin, Cambridge University, 2025
  *-------------------------------------------------------------------
- * Description:
+ * Description: simple utility for checking .alb files
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 17:41 2025 (rd109)
+ * Last edited: Aug  6 23:41 2025 (rd109)
  * Created: Mon Aug  4 13:43:40 2025 (rd109)
  *-------------------------------------------------------------------
  */
