@@ -5,7 +5,7 @@
  * Description: simple utility for checking .alb files
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  6 23:41 2025 (rd109)
+ * Last edited: Aug  7 08:35 2025 (rd109)
  * Created: Mon Aug  4 13:43:40 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -23,7 +23,7 @@ int main (int argc, char *argv[])
   U8 b ;
   if ((b = fgetc(f)) != 0) die ("first byte %d of input is non-zero", b) ;
   int prefixLen = (U8)fgetc(f), maxChars = (U8)fgetc(f), maxEdit = (U8)fgetc(f) ;
-  int recordLen = maxChars + 2*maxEdit + 5 ;
+  int recordLen = maxChars + 2*maxEdit + 13 ;
   char *prefix = malloc (prefixLen+1) ;
   int z = (prefixLen <= recordLen - 4) ? prefixLen : recordLen - 4 ;
   if (fread (prefix, z, 1, f) != 1) die ("failed to read prefix") ;
