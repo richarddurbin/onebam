@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  6 15:20 2025 (rd109)
+ * Last edited: Aug  7 01:02 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -493,6 +493,11 @@ bool bamMake1read (char *inFileName, char *outFileName)
 
 // base this on bam21bam() and make1read()
 
+static U8 uu0[] = { 0, 0,  1, 0,   2, 0, 0, 0,   3, 0, 0, 0, 0, 0, 0, 0 } ;
+static U8 uu1[] = { 0, 0,  4, 0,   8, 0, 0, 0,  12, 0, 0, 0, 0, 0, 0, 0 } ;
+static U8 uu2[] = { 0, 0, 16, 0,  32, 0, 0, 0,  48, 0, 0, 0, 0, 0, 0, 0 } ;
+static U8 uu3[] = { 0, 0, 64, 0, 128, 0, 0, 0, 192, 0, 0, 0, 0, 0, 0, 0 } ;
+
 bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxidFileName,
 	      int maxEdit, int prefixLen, int maxChars)
 {
@@ -541,7 +546,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   Hash   hTx           = hashCreate (8192) ;
   Array  aTx           = arrayCreate (2048, TaxInfo) ;
   char  *nameBuf       = new (maxChars+1, char) ;
-  U8    *edits         = new (2*maxEdit+4, U8) ;
+  U8    *edits         = new (2*maxEdit+12, U8) ; // add score (I32) then 8 bytes packed sequence
   I32   *maxScore      = (I32*)(edits + 2*maxEdit) ; *maxScore = -(1<<30) ;
   // sticking maxScore at the end of edits removes an fwrite() call
   U64    seqLen ;
@@ -550,8 +555,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   I64 nRecord = 0, nTxb = 0, nAlb = 0 ;
   TaxInfo *tx ;
   while (true) // main loop to read sequences
-    { if (nRecord == 100000000) break ;
-      int res = sam_read1 (bf->f, bf->h, bf->b) ;
+    { int res = sam_read1 (bf->f, bf->h, bf->b) ;
       if (res < -1) die ("bamProcess failed to read bam record %lld", (long long)++nRecord) ;
       if (res == -1) break ; // end of file
       ++nRecord ;
@@ -568,7 +572,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	  // first .alb header
 	  fputc (0, fAlb) ; fputc ((U8)prefixLen, fAlb) ;
 	  fputc ((U8)maxChars, fAlb) ; fputc((U8)maxEdit, fAlb) ;
-	  int pLen = prefixLen, recordSpace = maxChars + 2*maxEdit + 5 - 4 ; // length - 4 fputc
+	  int pLen = prefixLen, recordSpace = maxChars + 2*maxEdit + 13 - 4 ; // length - 4 fputc
 	  if (pLen > recordSpace)
 	    { pLen = recordSpace ;
 	      warn ("prefixLen %d is longer than header space %d - full prefix not stored",
@@ -626,12 +630,12 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 			  else
 			    { nS -= nR ; iS += nR ; nR = 0 ;
 			      if (nE < 2*maxEdit) // encode the edit
-				{ if (isMaxReverse)
+				{ if (isMaxReverse && (seqLen - iS < 256))
 				    { edits[nE++] = seqLen - iS ; // edits position is 1-based
 				      edits[nE++] = (seq[seqLen-1-iS] << 4) |
 					binaryAmbigComplement[dna2binaryAmbigConv[*md]] ;
 				    }
-				  else
+				  else if (iS + 1 < 256)
 				    { edits[nE++] = iS + 1 ; // edits position is 1-based
 				      edits[nE++] = (seq[iS] << 4) | dna2binaryAmbigConv[*md] ;
 				    }
@@ -649,7 +653,21 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	      nameBuf[maxChars] = (char)((seqLen > 255) ? 255 : seqLen) ;
 	      size_t ret = fwrite (nameBuf, maxChars+1, 1, fAlb) ;
 	      if (ret != 1) die ("failed name write to .alb - ret %d ferror %d", ret, ferror(fAlb)) ;
-	      ret = fwrite (edits, 2*maxEdit+4, 1, fAlb) ;
+	      U8 *u = edits + 2*maxEdit + 4 ;
+	      if (seqLen > 16) // pack first 16 bp and last 16 bp into last 8 bytes of edits[]
+		{ u[0] = uu0[seq[0]] | uu1[seq[1]] | uu2[seq[2]] | uu3[seq[3]] ;
+		  u[1] = uu0[seq[4]] | uu1[seq[5]] | uu2[seq[6]] | uu3[seq[7]] ;
+		  u[2] = uu0[seq[8]] | uu1[seq[9]] | uu2[seq[10]] | uu3[seq[11]] ;
+		  u[3] = uu0[seq[12]] | uu1[seq[13]] | uu2[seq[14]] | uu3[seq[15]] ;
+		  char *eseq = seq + seqLen ;
+		  u[0] = uu0[eseq[-1]] | uu1[eseq[-2]] | uu2[eseq[-3]] | uu3[eseq[-4]] ;
+		  u[1] = uu0[eseq[-5]] | uu1[eseq[-6]] | uu2[eseq[-7]] | uu3[eseq[-8]] ;
+		  u[2] = uu0[eseq[-9]] | uu1[eseq[-10]] | uu2[eseq[-11]] | uu3[eseq[-12]] ;
+		  u[3] = uu0[eseq[-13]] | uu1[eseq[-14]] | uu2[eseq[-15]] | uu3[eseq[-16]] ;
+		}
+	      else
+		*(U64*)u = 0 ;
+	      ret = fwrite (edits, 2*maxEdit+12, 1, fAlb) ;
 	      if (ret != 1) die ("failed data write to .alb - ret %d ferror %d", ret, ferror(fAlb)) ;
 	      ++nAlb ;
 	      *maxScore = -(1<<30) ;
