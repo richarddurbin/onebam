@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  6 23:41 2025 (rd109)
+ * Last edited: Aug  7 01:04 2025 (rd109)
  * Created: Mon Aug  4 19:34:03 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -21,7 +21,7 @@ static void readHeaderLine (FILE *f, int *prefixLen, int *maxChars, int *maxEdit
   *prefixLen = (U8)fgetc(f) ; // second byte - the first byte was 0
   *maxChars = (U8)fgetc(f) ;
   *maxEdit = (U8)fgetc(f) ;
-  *recordLen = *maxChars + 2 * *maxEdit + 5 ;
+  *recordLen = *maxChars + 2 * *maxEdit + 13 ;
   *prefix = malloc (*prefixLen+1) ;
   int z = (*prefixLen <= *recordLen - 4) ? *prefixLen : *recordLen - 4 ;
   if (fread (*prefix, z, 1, f) != 1) die ("failed to read prefix") ;
