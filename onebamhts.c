@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  7 01:02 2025 (rd109)
+ * Last edited: Aug  8 23:26 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -498,6 +498,100 @@ static U8 uu1[] = { 0, 0,  4, 0,   8, 0, 0, 0,  12, 0, 0, 0, 0, 0, 0, 0 } ;
 static U8 uu2[] = { 0, 0, 16, 0,  32, 0, 0, 0,  48, 0, 0, 0, 0, 0, 0, 0 } ;
 static U8 uu3[] = { 0, 0, 64, 0, 128, 0, 0, 0, 192, 0, 0, 0, 0, 0, 0, 0 } ;
 
+#define REPORT_ALB \
+  memset (edits, 0, 2*maxEdit) ; \
+  U8 nE = 0 ; /* number of edits */ \
+  char *md = mdBuf ; \
+  /* printf ("md %s\n", md) ; */ \
+  int iS = 0, nR = 0, nM = strlen(mdBuf) ; /* position in sequence, reference */  \
+  while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0'); --nM; } \
+  /* printf ("  nM %d nR %d *md %c nE %d\n", nM, nR, *md, nE) ; */ \
+  U32 *cigar = cBuf ; \
+  while (nCigar) \
+    { int nS = bam_cigar_oplen(*cigar), op = bam_cigar_op(*cigar++) ; --nCigar ; \
+      /* printf ("  iS %d [CIGAR nS %d op %c]\n", iS, nS, bam_cigar_opchr(op)) ; */  \
+      switch (bam_cigar_type(op)) \
+	{ \
+	case 0: break ; /* do nothing */ \
+	case 1: iS += nS ; break ; /* INSERT (or SOFT_CLIP) */ \
+	case 2: /* DELETE (or REF_SKIP) */ 				\
+	  if (nR) die ("bad md match %d at delete record %d", nR, (int) nRecord) ; \
+	  if (*md != '^') die ("bad delete match %c at record %d", *md, (int) nRecord) ; \
+	  ++md ; --nM ; /* eat the ^ character */ 			\
+	  if (nM < nS) die ("%d < %d delete chars at record %d", nM, nS, (int) nRecord) ; \
+	  md += nS ; nM -= nS ; /* eat the deleted chars */ 		\
+	  while (nM && (*md >= '0' && *md <= '9')) \
+	    { nR = nR*10 + (*md++ - '0') ; --nM ; } \
+	  /* printf ("  nM %d nR %d *md %c nE %d\n", nM, nR, *md, nE) ; */  \
+	  break ; \
+	case 3: /* MATCH (or EQUAL or DIFF) */ \
+	  while (nS) \
+	    { if (nS <= nR) \
+		{ nR -= nS ; iS += nS ; nS = 0 ; } \
+	      else \
+		{ nS -= nR ; iS += nR ; nR = 0 ; \
+		  if (nE < 2*maxEdit) /* encode the edit */  \
+		    { if (isMaxReverse && (seqLen - iS < 256)) \
+			{ edits[nE++] = seqLen - iS ; /* edits position is 1-based */ \
+			  edits[nE++] = (seq[seqLen-1-iS] << 4) | \
+			    binaryAmbigComplement[dna2binaryAmbigConv[*md]] ; \
+			} \
+		      else if (iS + 1 < 256) \
+			{ edits[nE++] = iS + 1 ; /* edits position is 1-based */  \
+			  edits[nE++] = (seq[iS] << 4) | dna2binaryAmbigConv[*md] ; \
+			} \
+		    } \
+		  ++iS ; --nS ; ++md ; --nM ; /* do this even if can't register edit */ \
+		  while (nM && (*md >= '0' && *md <= '9')) \
+		    { nR = nR*10 + (*md++ - '0') ; --nM ; } \
+		  /* printf ("  nM %d nR %d *md %c nE %d\n", nM, nR, *md, nE) ; */  \
+		} \
+	    } \
+	  break ; \
+	} \
+    } \
+  if (iS != seqLen) die ("iS %d != seqLen %d", iS, seqLen) ; \
+ \
+  /* pack first 16 bp and last 16 bp into last 8 bytes of edits[] */ \
+  U8 *u = edits + 2*maxEdit + 4 ; \
+  if (seqLen > 16) \
+    { u[0] = uu0[seq[0]] | uu1[seq[1]] | uu2[seq[2]] | uu3[seq[3]] ; \
+      u[1] = uu0[seq[4]] | uu1[seq[5]] | uu2[seq[6]] | uu3[seq[7]] ; \
+      u[2] = uu0[seq[8]] | uu1[seq[9]] | uu2[seq[10]] | uu3[seq[11]] ; \
+      u[3] = uu0[seq[12]] | uu1[seq[13]] | uu2[seq[14]] | uu3[seq[15]] ; \
+      char *eseq = seq + seqLen ; \
+      u[0] = uu0[eseq[-1]] | uu1[eseq[-2]] | uu2[eseq[-3]] | uu3[eseq[-4]] ; \
+      u[1] = uu0[eseq[-5]] | uu1[eseq[-6]] | uu2[eseq[-7]] | uu3[eseq[-8]] ; \
+      u[2] = uu0[eseq[-9]] | uu1[eseq[-10]] | uu2[eseq[-11]] | uu3[eseq[-12]] ; \
+      u[3] = uu0[eseq[-13]] | uu1[eseq[-14]] | uu2[eseq[-15]] | uu3[eseq[-16]] ; \
+    } \
+  else \
+    *(U64*)u = 0 ; \
+\
+  /* now write */ \
+  nameBuf[maxChars] = (char)((seqLen > 255) ? 255 : seqLen) ; \
+  size_t ret = fwrite (nameBuf, maxChars+1, 1, fAlb) ; \
+  if (ret != 1) die ("failed name write to .alb - ret %d ferror %d", ret, ferror(fAlb)) ; \
+  ret = fwrite (edits, 2*maxEdit+12, 1, fAlb) ;	\
+  if (ret != 1) die ("failed data write to .alb - ret %d ferror %d", ret, ferror(fAlb))
+
+
+int txCompare (const void *a, const void *b)
+{ TaxInfo *txa = (TaxInfo*)a, *txb = (TaxInfo*)b ;
+  return txa->count - txb->count ;
+}
+
+void reportTxb (FILE *fTxb, char *nameBuf, int maxChars, Array aTx)
+{ int i ;
+  arraySort (aTx, txCompare) ;
+  for (i = 0 ; i < arrayMax(aTx); ++i)
+    { if (fwrite (nameBuf, maxChars, 1, fTxb) != 1)
+	die ("failed name write to .txb") ;
+      if (fwrite (arrp(aTx,i,TaxInfo), sizeof(TaxInfo), 1, fTxb) != 1)
+	die ("failed data write to .txb - ferror %d", ferror (fTxb)) ;
+    }
+}
+
 bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxidFileName,
 	      int maxEdit, int prefixLen, int maxChars)
 {
@@ -598,87 +692,13 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	{ memset (nameBuf, 0, maxChars+1) ;
 	  if (strlen(lastqName) > prefixLen) strncpy (nameBuf, lastqName+prefixLen, maxChars) ;
 	  if (*maxScore > -(1<<30))  // report it - NB it will not be on the first record
-	    { U8 nE = 0 ; // number of edits
-	      memset (edits, 0, 2*maxEdit) ;
-	      char *md = mdBuf ;
-	      // printf ("record %d md %s\n", (int)nRecord, md) ;
-	      int iS = 0, nR = 0, nM = strlen(mdBuf) ; // position in sequence, reference
-	      while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0'); --nM; }
-	      // printf ("  nM %d nR %d *md %c nE %d\n", nM, nR, *md, nE) ;
-	      U32 *cigar = cBuf ;
-	      while (nCigar)
-		{ int nS = bam_cigar_oplen(*cigar), op = bam_cigar_op(*cigar++) ; --nCigar ;
-		  // printf ("  iS %d [CIGAR nS %d op %c]\n", iS, nS, bam_cigar_opchr(op)) ;
-		  switch (bam_cigar_type(op))
-		    {
-		    case 0: break ; // do nothing
-		    case 1: iS += nS ; break ; // INSERT (or SOFT_CLIP)
-		    case 2: // DELETE (or REF_SKIP)
-		      if (nR) die ("bad md match %d at delete record %d", nR, (int) nRecord) ;
-		      if (*md != '^') die ("bad delete match %c at record %d", *md, (int) nRecord) ;
-		      ++md ; --nM ; // eat the ^ character
-		      if (nM < nS) die ("%d < %d delete chars at record %d", nM, nS, (int) nRecord) ;
-		      md += nS ; nM -= nS ; // eat the deleted chars
-		      while (nM && (*md >= '0' && *md <= '9'))
-			{ nR = nR*10 + (*md++ - '0') ; --nM ; }
-		      // printf ("  nM %d nR %d *md %c nE %d\n", nM, nR, *md, nE) ;
-		      break ;
-		    case 3: // MATCH (or EQUAL or DIFF)
-		      while (nS)
-			{ if (nS <= nR)
-			    { nR -= nS ; iS += nS ; nS = 0 ; }
-			  else
-			    { nS -= nR ; iS += nR ; nR = 0 ;
-			      if (nE < 2*maxEdit) // encode the edit
-				{ if (isMaxReverse && (seqLen - iS < 256))
-				    { edits[nE++] = seqLen - iS ; // edits position is 1-based
-				      edits[nE++] = (seq[seqLen-1-iS] << 4) |
-					binaryAmbigComplement[dna2binaryAmbigConv[*md]] ;
-				    }
-				  else if (iS + 1 < 256)
-				    { edits[nE++] = iS + 1 ; // edits position is 1-based
-				      edits[nE++] = (seq[iS] << 4) | dna2binaryAmbigConv[*md] ;
-				    }
-				}
-			      ++iS ; --nS ; ++md ; --nM ; // do this even if can't register edit
-			      while (nM && (*md >= '0' && *md <= '9'))
-				{ nR = nR*10 + (*md++ - '0') ; --nM ; }
-			      // printf ("  nM %d nR %d *md %c nE %d\n", nM, nR, *md, nE) ;
-			    }
-			}
-		      break ;
-		    }
-		}
-	      if (iS != seqLen) die ("record %d: iS %d != seqLen %d", (int)nRecord, iS, seqLen) ;
-	      nameBuf[maxChars] = (char)((seqLen > 255) ? 255 : seqLen) ;
-	      size_t ret = fwrite (nameBuf, maxChars+1, 1, fAlb) ;
-	      if (ret != 1) die ("failed name write to .alb - ret %d ferror %d", ret, ferror(fAlb)) ;
-	      U8 *u = edits + 2*maxEdit + 4 ;
-	      if (seqLen > 16) // pack first 16 bp and last 16 bp into last 8 bytes of edits[]
-		{ u[0] = uu0[seq[0]] | uu1[seq[1]] | uu2[seq[2]] | uu3[seq[3]] ;
-		  u[1] = uu0[seq[4]] | uu1[seq[5]] | uu2[seq[6]] | uu3[seq[7]] ;
-		  u[2] = uu0[seq[8]] | uu1[seq[9]] | uu2[seq[10]] | uu3[seq[11]] ;
-		  u[3] = uu0[seq[12]] | uu1[seq[13]] | uu2[seq[14]] | uu3[seq[15]] ;
-		  char *eseq = seq + seqLen ;
-		  u[0] = uu0[eseq[-1]] | uu1[eseq[-2]] | uu2[eseq[-3]] | uu3[eseq[-4]] ;
-		  u[1] = uu0[eseq[-5]] | uu1[eseq[-6]] | uu2[eseq[-7]] | uu3[eseq[-8]] ;
-		  u[2] = uu0[eseq[-9]] | uu1[eseq[-10]] | uu2[eseq[-11]] | uu3[eseq[-12]] ;
-		  u[3] = uu0[eseq[-13]] | uu1[eseq[-14]] | uu2[eseq[-15]] | uu3[eseq[-16]] ;
-		}
-	      else
-		*(U64*)u = 0 ;
-	      ret = fwrite (edits, 2*maxEdit+12, 1, fAlb) ;
-	      if (ret != 1) die ("failed data write to .alb - ret %d ferror %d", ret, ferror(fAlb)) ;
+	    { REPORT_ALB ;
 	      ++nAlb ;
 	      *maxScore = -(1<<30) ;
 	    }
 	  if (arrayMax(aTx))
-	    { for (i = 0 ; i < arrayMax(aTx); ++i)
-		{ if (fwrite (nameBuf, maxChars, 1, fTxb) != 1) die ("failed name write to .txb") ;
-		  if (fwrite (arrp(aTx,i,TaxInfo), sizeof(TaxInfo), 1, fTxb) != 1)
-		    die ("failed data write to .txb - ferror %d", ferror (fTxb)) ;
-		  ++nTxb ;
-		}			    
+	    { reportTxb (fTxb, nameBuf, maxChars, aTx) ;
+	      nTxb += arrayMax(aTx) ;
 	      hashClear (hTx) ; arrayMax (aTx) = 0 ;
 	    }
 								
@@ -725,7 +745,18 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	  ENSURE_BUF_SIZE (mdBuf, mdBufSize, 1+strlen(s), char) ;
 	  strcpy (mdBuf, s) ;
 	}
-    }     
+    }
+
+  // report the final entry
+  if (*maxScore > -(1<<30))  // report it - NB it will not be on the first record
+    { REPORT_ALB ;
+      ++nAlb ;
+    }
+  if (arrayMax(aTx))
+    { reportTxb (fTxb, nameBuf, maxChars, aTx) ;
+      nTxb += arrayMax(aTx) ;
+    }
+  
   printf ("processed %lld BAM records into\n"
 	  "  %lld .alb (edit info)  records of size %d (name) + %d (data) = %d bytes\n"
 	  "  %lld .txb (taxid info) records of size %d (name) + %d (data) = %d bytes\n",
