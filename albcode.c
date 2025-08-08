@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  7 01:04 2025 (rd109)
+ * Last edited: Aug  8 23:02 2025 (rd109)
  * Created: Mon Aug  4 19:34:03 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -58,6 +58,7 @@ void albReport (char *albFileName, char *outFileName)
   U64  lengths[256] = {0} ;
   U64  start[15][4][4] = {0}, end[15][4][4] = {0}, mid[4][4] = {0} ;
   U64 *edits = new0 (maxEdit+1,U64) ;
+  U64 *scores = new0 (256, U64) ;
   
   // process records
   char *buf = malloc(recordLen) ;
@@ -67,6 +68,8 @@ void albReport (char *albFileName, char *outFileName)
       int seqLen = ((U8*)buf)[maxChars] ;
       ++lengths[seqLen] ;
       int score = (int)*(I32*)(buf+maxChars+1+2*maxEdit) ;
+      if (score > 127 || score < -128) warn ("score %d record %llu", score, nRecord) ;
+      else ++scores[score+128] ;
       for (i = 0 ; i < maxEdit ; ++i)
 	{ U8 pos = (U8)buf[prefixLen+1+2*i] ;
 	  if (!pos) break ; else --pos ;  // because pos was 1-based
@@ -96,6 +99,8 @@ void albReport (char *albFileName, char *outFileName)
       for (i = 0 ; i < 256 ; ++i) { psum += i*lengths[i] ; if (psum*2 < sum) n50 = i+1 ; }
       double mean = sum/(double)nRecord ;
       fprintf (fOut, "LENGTHS min %d max %d mean %.1f n50 %d\n", min, max, mean, n50) ;
+      for (i = 255 ; i >= 0 ; --i)
+	if (scores[i]) fprintf (fOut, "SCORES %4d %llu\n", i-128, scores[i]) ;
       fprintf (fOut, "EDITS") ;
       for (i = 0 ; i <= maxEdit ; ++i) fprintf (fOut, " %llu", edits[i]) ;
       fprintf (fOut, "\n") ;
