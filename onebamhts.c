@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  8 23:26 2025 (rd109)
+ * Last edited: Aug 11 12:41 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -322,9 +322,9 @@ typedef struct {
 } B2rThread ;
 
 typedef struct {
-  int txid ;
-  int count ;
-  int bestScore ;
+  U32 txid ;
+  U16 count ;
+  I16 bestScore ;
 } TaxInfo ; // info per taxid for this thread
 
 #include <ctype.h>	// for tolower(), toupper()
@@ -368,7 +368,7 @@ static void *b2rThread (void *arg)
 	    txid   = ti->taxid[oneInt(ti->ofIn,1)] ;
 	    if (hashAdd (hTx, hashInt(txid), &i))
 	      { tx = arrayp(aTx,i,TaxInfo) ;
-		tx->txid = txid ; tx->count = 0 ; tx->bestScore = -(1<<30) ;
+		tx->txid = txid ; tx->count = 0 ; tx->bestScore = -(1<<14) ;
 	      }
 	    else
 	      tx = arrp(aTx,i,TaxInfo) ;
@@ -578,16 +578,16 @@ static U8 uu3[] = { 0, 0, 64, 0, 128, 0, 0, 0, 192, 0, 0, 0, 0, 0, 0, 0 } ;
 
 int txCompare (const void *a, const void *b)
 { TaxInfo *txa = (TaxInfo*)a, *txb = (TaxInfo*)b ;
-  return txa->count - txb->count ;
+  return txa->txid - txb->txid ;
 }
 
 void reportTxb (FILE *fTxb, char *nameBuf, int maxChars, Array aTx)
-{ int i ;
-  arraySort (aTx, txCompare) ;
-  for (i = 0 ; i < arrayMax(aTx); ++i)
-    { if (fwrite (nameBuf, maxChars, 1, fTxb) != 1)
-	die ("failed name write to .txb") ;
-      if (fwrite (arrp(aTx,i,TaxInfo), sizeof(TaxInfo), 1, fTxb) != 1)
+{ if (arrayMax(aTx))
+    { if (fwrite (nameBuf, maxChars, 1, fTxb) != 1) die ("failed name write to .txb") ;
+      I32 n = arrayMax(aTx) ;
+      if (fwrite (&n, sizeof(I32), 1, fTxb) != 1) die ("failed n write to .txb") ;
+      arraySort (aTx, txCompare) ;
+      if (fwrite (arrp(aTx,0,TaxInfo), sizeof(TaxInfo), n, fTxb) != n)
 	die ("failed data write to .txb - ferror %d", ferror (fTxb)) ;
     }
 }
@@ -644,9 +644,11 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   I32   *maxScore      = (I32*)(edits + 2*maxEdit) ; *maxScore = -(1<<30) ;
   // sticking maxScore at the end of edits removes an fwrite() call
   U64    seqLen ;
+  int    maxCharsTxb   = maxChars ;
   bool   isFirst       = true ;
   
-  I64 nRecord = 0, nTxb = 0, nAlb = 0 ;
+  
+  I64 nRecord = 0, nTxb = 0, nAlb = 0, nHits = 0 ;
   TaxInfo *tx ;
   while (true) // main loop to read sequences
     { int res = sam_read1 (bf->f, bf->h, bf->b) ;
@@ -676,20 +678,17 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	    die ("failed to write .alb header record length %d", pLen) ;
 	  recordSpace -= pLen ; while (recordSpace--) fputc (0, fAlb) ; // pad out rest of record
 	  // now write .txb header
-	  fputc (0, fTxb) ; fputc ((U8)prefixLen, fTxb) ; fputc ((U8)maxChars, fTxb) ;
-	  pLen = prefixLen ; recordSpace = maxChars + (int)sizeof(TaxInfo) - 3 ; // 3 fputc's here
-	  if (pLen > recordSpace)
-	    { pLen = recordSpace ;
-	      warn ("prefixLen %d is longer than header space %d - full prefix not stored",
-		    prefixLen, recordSpace) ;
-	    }
-	  if (fwrite (qName, pLen, 1, fTxb) != 1) die ("failed to write .txb header record") ;
-	  recordSpace -= pLen ; while (recordSpace--) fputc (0, fTxb) ; // pad out rest of record
+	  // first ensure that maxChars is large enough to store the whole prefix in the header
+	  if (maxCharsTxb < prefixLen - 1) maxCharsTxb = prefixLen - 1 ;
+	  fputc (0, fTxb) ; fputc ((U8)prefixLen, fTxb) ; fputc ((U8)maxCharsTxb, fTxb) ;
+	  recordSpace = maxCharsTxb + sizeof(I32) - 3 ; // 3 fputc's here
+	  if (fwrite (qName, prefixLen, 1, fTxb) != 1) die ("failed to write .txb header record") ;
+	  recordSpace -= prefixLen ; while (recordSpace--) fputc (0, fTxb) ; // pad out rest of record
 	  isFirst = false ;
 	}
       
       if (strcmp (lastqName, qName)) // new query sequence
-	{ memset (nameBuf, 0, maxChars+1) ;
+	{ memset (nameBuf, 0, maxCharsTxb+1) ; // maxCharsTxb >= maxChars
 	  if (strlen(lastqName) > prefixLen) strncpy (nameBuf, lastqName+prefixLen, maxChars) ;
 	  if (*maxScore > -(1<<30))  // report it - NB it will not be on the first record
 	    { REPORT_ALB ;
@@ -697,8 +696,9 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	      *maxScore = -(1<<30) ;
 	    }
 	  if (arrayMax(aTx))
-	    { reportTxb (fTxb, nameBuf, maxChars, aTx) ;
-	      nTxb += arrayMax(aTx) ;
+	    { reportTxb (fTxb, nameBuf, maxCharsTxb, aTx) ;
+	      ++nTxb ; 
+	      nHits += arrayMax(aTx) ;
 	      hashClear (hTx) ; arrayMax (aTx) = 0 ;
 	    }
 								
@@ -721,7 +721,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
       txid = taxid[bf->b->core.tid+1] ; // is the +1 correct here?
       if (hashAdd (hTx, hashInt(txid), &i))
 	{ tx = arrayp(aTx,i,TaxInfo) ;
-	  tx->txid = txid ; tx->count = 0 ; tx->bestScore = -(1<<30) ;
+	  tx->txid = txid ; tx->count = 0 ; tx->bestScore = -(1<<14) ;
 	}
       else
 	tx = arrp(aTx,i,TaxInfo) ;
@@ -754,15 +754,19 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
     }
   if (arrayMax(aTx))
     { reportTxb (fTxb, nameBuf, maxChars, aTx) ;
-      nTxb += arrayMax(aTx) ;
+      ++nTxb ;
+      nHits += arrayMax(aTx) ;
     }
   
-  printf ("processed %lld BAM records into\n"
-	  "  %lld .alb (edit info)  records of size %d (name) + %d (data) = %d bytes\n"
-	  "  %lld .txb (taxid info) records of size %d (name) + %d (data) = %d bytes\n",
-	  (long long) nRecord,
+  printf ("processed %lld BAM records into\n", (long long) nRecord) ;
+
+  printf ("  %lld .alb (edit info) records of size %d (name) + %d (data) = %d bytes, total %lld bytes\n",
 	  (long long) nAlb, maxChars, 2*maxEdit + 4, maxChars + 2*maxEdit + 4,
-	  (long long) nTxb, maxChars, (int)sizeof(TaxInfo), maxChars + (int)sizeof(TaxInfo)) ;
+	  (long long) (nAlb * (maxChars + 2*maxEdit + 4))) ;
+  printf ("  %lld .txb (taxid info) records of size %d (name) + 4 = %d bytes, plus %lld hits of size %d bytes, total %lld bytes\n",
+	  (long long) nTxb, maxCharsTxb, maxCharsTxb + (int)sizeof(I32),
+	  (long long) nHits, (int)sizeof(TaxInfo),
+	  (long long) (nTxb * (maxCharsTxb + sizeof(I32)) + nHits * sizeof(TaxInfo))) ;
   timeUpdate (stdout) ;
   
   bamFileClose (bf) ;
