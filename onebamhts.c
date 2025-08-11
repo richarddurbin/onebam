@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 11 12:41 2025 (rd109)
+ * Last edited: Aug 11 13:13 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -681,9 +681,9 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 	  // first ensure that maxChars is large enough to store the whole prefix in the header
 	  if (maxCharsTxb < prefixLen - 1) maxCharsTxb = prefixLen - 1 ;
 	  fputc (0, fTxb) ; fputc ((U8)prefixLen, fTxb) ; fputc ((U8)maxCharsTxb, fTxb) ;
-	  recordSpace = maxCharsTxb + sizeof(I32) - 3 ; // 3 fputc's here
 	  if (fwrite (qName, prefixLen, 1, fTxb) != 1) die ("failed to write .txb header record") ;
-	  recordSpace -= prefixLen ; while (recordSpace--) fputc (0, fTxb) ; // pad out rest of record
+	  recordSpace = maxCharsTxb + sizeof(I32) - 3 - prefixLen ;
+	  while (recordSpace--) fputc (0, fTxb) ; // pad out rest of record
 	  isFirst = false ;
 	}
       
@@ -760,13 +760,13 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   
   printf ("processed %lld BAM records into\n", (long long) nRecord) ;
 
-  printf ("  %lld .alb (edit info) records of size %d (name) + %d (data) = %d bytes, total %lld bytes\n",
-	  (long long) nAlb, maxChars, 2*maxEdit + 4, maxChars + 2*maxEdit + 4,
-	  (long long) (nAlb * (maxChars + 2*maxEdit + 4))) ;
-  printf ("  %lld .txb (taxid info) records of size %d (name) + 4 = %d bytes, plus %lld hits of size %d bytes, total %lld bytes\n",
+  printf ("  %lld .alb (edit info) records of size %d (name) + %d (data) = %d bytes, total %lld bytes including header\n",
+	  (long long) nAlb, maxChars, 2*maxEdit + 13, maxChars + 2*maxEdit + 13,
+	  (long long) ((nAlb+1) * (maxChars + 2*maxEdit + 13))) ;
+  printf ("  %lld .txb (taxid info) records of size %d (name) + 4 = %d bytes, plus %lld hits of size %d bytes, total %lld bytes (including header)\n",
 	  (long long) nTxb, maxCharsTxb, maxCharsTxb + (int)sizeof(I32),
 	  (long long) nHits, (int)sizeof(TaxInfo),
-	  (long long) (nTxb * (maxCharsTxb + sizeof(I32)) + nHits * sizeof(TaxInfo))) ;
+	  (long long) ((nTxb+1) * (maxCharsTxb + sizeof(I32)) + nHits * sizeof(TaxInfo))) ;
   timeUpdate (stdout) ;
   
   bamFileClose (bf) ;
