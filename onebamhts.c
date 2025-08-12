@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 13 00:36 2025 (rd109)
+ * Last edited: Aug 13 00:43 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -108,12 +108,9 @@ void auxAdd (char *oneCode, char *spec)
   a->fmt = (spec[3] == 'B') ? spec[4] + 1 : spec[3] ;
 }
 
-static int accOrder (void *names, const void *a, const void *b)
-{ return strcmp(((char**)names)[*(int*)a], ((char**)names)[*(int*)b]) ; }
-
-static char **QSORT_ARG ; // need this for systems without qsort_r()
-static int accOrderBare (const void *a, const void *b)
-{ return strcmp(QSORT_ARG[*(int*)a], QSORT_ARG[*(int*)b]) ; }
+static char **NAMES ; // ugly - wanted to use qsort_r(), but can't deal with platform inconsistency
+static int accOrder (const void *a, const void *b)
+{ return strcmp(NAMES[*(int*)a], NAMES[*(int*)b]) ; }
 
 static const char binaryAmbigComplement[16] =
   { 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 } ;
@@ -160,14 +157,7 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
   int *tidMap = new(nTargets+1,int), *revMap = new(nTargets,int) ;
   for (i = 0 ; i < nTargets ; ++i) revMap[i] = i ;
   
-#if defined(_GNU_SOURCE) || defined(__GLIBC__)
-  qsort_r(revMap, nTargets, sizeof(int), accOrder, bf->h->target_name);  // GNU/Linux glibc version
-#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
-  qsort_r(revMap, nTargets, sizeof(int), bf->h->target_name, accOrder);  // BSD version (different parameter order!)
-#else
-  QSORT_ARG = bf->h->target_name ;
-  qsort (revMap, nTargets, sizeof(int), accOrderBare) ;
-#endif 
+  NAMES = bf->h->target_name ; qsort (revMap, nTargets, sizeof(int), accOrder) ;
 
   int *taxid = new0(nTargets+1,int) ;
   if (taxidFileName) // merge the header targets to this to identify the taxids
@@ -641,14 +631,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   int i, *revMap = new(nTargets,int) ;
   for (i = 0 ; i < nTargets ; ++i) revMap[i] = i ;
   
-#if defined(_GNU_SOURCE) || defined(__GLIBC__)
-  qsort_r(revMap, nTargets, sizeof(int), accOrder, bf->h->target_name);  // GNU/Linux glibc version
-#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
-  qsort_r(revMap, nTargets, sizeof(int), bf->h->target_name, accOrder);  // BSD version (different parameter order!)
-#else
-  QSORT_ARG = bf->h->target_name ;
-  qsort (revMap, nTargets, sizeof(int), accOrderBare) ;
-#endif 
+  NAMES = bf->h->target_name ; qsort (revMap, nTargets, sizeof(int), accOrder) ;
 
   printf ("sorted the targets: ") ; timeUpdate (stdout) ;
   // next merge the targets to the taxid file to identify the taxids
