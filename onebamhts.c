@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 11 13:13 2025 (rd109)
+ * Last edited: Aug 13 00:36 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -110,13 +110,10 @@ void auxAdd (char *oneCode, char *spec)
 
 static int accOrder (void *names, const void *a, const void *b)
 { return strcmp(((char**)names)[*(int*)a], ((char**)names)[*(int*)b]) ; }
-#if !defined(QSORT_R)
-static void *qsort_arg ;
-static int accOrderBare  (const void *a, const void *b)
-{ return strcmp(((char**)qsort_arg)[*(int*)a], ((char**)qsort_arg)[*(int*)b]) ; }
-static void qsort_r(void *base, size_t n, size_t size, void *arg, int (*comp)(void *, const void *, const void *))
-{ qsort_arg = arg ; qsort (base, n, size, accOrderBare) ; }
-#endif
+
+static char **QSORT_ARG ; // need this for systems without qsort_r()
+static int accOrderBare (const void *a, const void *b)
+{ return strcmp(QSORT_ARG[*(int*)a], QSORT_ARG[*(int*)b]) ; }
 
 static const char binaryAmbigComplement[16] =
   { 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 } ;
@@ -162,19 +159,31 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
   // deal with the targets - first sort them, allowing for tid 0 = * (no target)
   int *tidMap = new(nTargets+1,int), *revMap = new(nTargets,int) ;
   for (i = 0 ; i < nTargets ; ++i) revMap[i] = i ;
-  qsort_r (revMap, nTargets, sizeof(int), bf->h->target_name, accOrder) ;
+  
+#if defined(_GNU_SOURCE) || defined(__GLIBC__)
+  qsort_r(revMap, nTargets, sizeof(int), accOrder, bf->h->target_name);  // GNU/Linux glibc version
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+  qsort_r(revMap, nTargets, sizeof(int), bf->h->target_name, accOrder);  // BSD version (different parameter order!)
+#else
+  QSORT_ARG = bf->h->target_name ;
+  qsort (revMap, nTargets, sizeof(int), accOrderBare) ;
+#endif 
+
   int *taxid = new0(nTargets+1,int) ;
   if (taxidFileName) // merge the header targets to this to identify the taxids
     { FILE *tf = fopen (taxidFileName, "r") ; if (!tf) die ("failed to open taxid file %s", taxidFileName) ;
       char accBuf[32] ; *accBuf = 0 ;
-      int  tid, nFound = 0, comp ;
+      int  tid, nFound = 0, nT = 0, comp ;
       for (i = 0 ; i < nTargets ; ++i)
 	{ char *acc = bf->h->target_name[revMap[i]] ;
-	  while ((comp = strcmp (accBuf, acc)) < 0) if (fscanf (tf, "%s\t%d\n", accBuf, &tid) != 2) break ;
+	  while ((comp = strcmp (accBuf, acc)) < 0)
+	    { if (fscanf (tf, "%s\t%d\n", accBuf, &tid) != 2) break ;
+	      ++nT ;
+	    }
 	  if (!comp) { taxid[revMap[i]+1] = tid ; ++nFound ; }
 	}
       fclose (tf) ;
-      printf ("found %d taxids: ", nFound) ; timeUpdate (stdout) ;
+      printf ("found %d taxids in %d txid2acc entries: ", nFound, nT) ; timeUpdate (stdout) ;
     }
 
   tidMap[0] = 0 ;
@@ -336,9 +345,14 @@ static void *b2rThread (void *arg)
   Array      aTx = arrayCreate (2048, TaxInfo) ;
 
   I64   seqLenMax ; oneStats (ti->ofIn, 'S', 0, &seqLenMax, 0) ;
-  char *mLine = new (seqLenMax, char) ;
-  I32   mScore ;
-  char  mMap[128] ; { char  *s = ".-acgtnACGTN", *t = ".-tgcanTGCAN" ; while (*s) mMap[*s++] = *t++ ;  }
+  
+  char *mLine = new (seqLenMax, char), *mMD = new (seqLenMax, char) ;
+  I32   mScore, nmCigar, nmMD ;
+  I64  *mCigar = new(seqLenMax,I64) ; // seqLenMax is surely sufficient!
+  bool  mFlags ;
+
+  char  mMap[128] ;
+  { char  *s = ".-acgtnACGTN", *t = ".-tgcanTGCAN" ; while (*s) mMap[*s++] = *t++ ;  }
 
   int i, n = 0 ;
   oneGoto (ti->ofIn, 'S', ti->start) ;
@@ -356,8 +370,9 @@ static void *b2rThread (void *arg)
       while (oneReadLine (ti->ofIn) && ti->ofIn->lineType != 'S')
 	switch (ti->ofIn->lineType)
 	  {
-	  case 'Q': // save it for mismatch record
+	  case 'Q': // save it for mismatch record and copy it
 	    qual = oneString(ti->ofIn) ;
+	    oneWriteLine (ti->ofOut, 'Q', oneLen(ti->ofIn), qual) ;
 	    break ;
 	  case 'J': // copy it
 	    oneInt(ti->ofOut,0) = oneInt(ti->ofIn,0) ;
@@ -382,54 +397,66 @@ static void *b2rThread (void *arg)
 	  case 'm':
 	    if (score > mScore) // mScore is best score for the sequence
 	      { mScore = score ;
-		int   nM = oneLen(ti->ofIn) ;
-		char *md = oneString (ti->ofIn) ;
-		// we actually want the edits in the read space, not the reference space
-		// first reconstruct reference string, then map that to the read with cigar
-		// see  https://vincebuffalo.com/notes/2014/01/17/md-tags-in-bam-files.html
-		int iS = 0 ; // position in sequence, reference
-		int nR=0; while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0'); --nM; }
-		while (nCigar)
-		  { int nS = bam_cigar_oplen(*i64cigar), op = bam_cigar_op(*i64cigar++) ; --nCigar ;
-		    switch (bam_cigar_type(op))
-		      {
-		      case 0: break ; // do nothing
-		      case 1: // INSERT (or SOFT_CLIP)
-			for (i = 0 ; i < nS ; ++i) mLine[iS++] = '-' ;
-			break ;
-		      case 2: // DELETE (or REF_SKIP)
-			while (nS--)
-			  { if (nR || nM < 2 || *md++ != '^') die ("bad refmatch") ;
-			    ++md ; nM -= 2 ; // eat up the deleted base
-			  }
-			break ;
-		      case 3: // MATCH (or EQUAL or DIFF)
-			while (nS)
-			  { while (nS && nR) { mLine[iS++] = '.' ; --nR ; --nS ; }
-			    if (nS && !nR)
-			      { // encode the edit
-				mLine[iS] = (qual[iS]<20)?tolower(*md++):toupper(*md++) ; ++iS ; --nS ;
-				// 4*dna2indexConv[seq[iS++]] + dna2indexConv[*md++] ; --nS ;
-				while (nM && (*md >= '0' && *md <= '9')) {nR = nR*10 +(*md++ - '0'); --nM; }
-			      }
-			  }
-			break ;
-		      }
-		  }
-		if (iS != seqLen) die ("iS %d != seqLen %d", iS, seqLen) ;
-		if (flags & BAM_FREVERSE) // need to reverse-complement mLine
-		  { int i, j ;
-		    for (i = 0, j = seqLen ; i < --j ; ++i)
-		      { char t = mLine[i] ; mLine[i] = mMap[mLine[j]] ; mLine[j] = mMap[t] ; }
-		    if (i == j) mLine[i] = mMap[mLine[i]] ;
-		  }
+		nmCigar = nCigar ;
+		memcpy (mCigar, i64cigar, nCigar*sizeof(I64)) ;
+		mFlags = flags ;
+		nmMD = oneLen(ti->ofIn) ;
+		memcpy (mMD, oneString (ti->ofIn), nmMD) ;
 	      }
 	    break ;
 	  default: break ;
 	  }
 
+      // code to write out the max score (mScore) and edit line (mLine)
+      // we actually want the edits in the read space, not the reference space
+      // first reconstruct reference string, then map that to the read with cigar
+      // see  https://vincebuffalo.com/notes/2014/01/17/md-tags-in-bam-files.html
+      int iS = 0 ; // position in sequence, reference
+      int nM = nmMD ; char *md = mMD ; 
+      int nR = 0 ; while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0') ; --nM ; }
+      int nC = nmCigar ; I64 *cigar = mCigar ;
+      while (nC--)
+	{ int nS = bam_cigar_oplen(*cigar), op = bam_cigar_op(*cigar++) ;
+	  switch (bam_cigar_type(op))
+	    {
+	    case 0: break ; // do nothing
+	    case 1: // INSERT (or SOFT_CLIP)
+	      for (i = 0 ; i < nS ; ++i) mLine[iS++] = '-' ;
+	      break ;
+	    case 2: // DELETE (or REF_SKIP)
+	      if (nR)
+		die ("bad md match nR %d object %d", nR, (int)oneObject(ti->ofIn,'S')) ;
+	      if (*md != '^')
+		die ("bad delete char %c object %d", *md, (int)oneObject(ti->ofIn,'S')) ;
+	      ++md ; --nM ; // eat the ^ character
+	      if (nM < nS)
+		die ("%d < %d delete chars object %d", nM, nS, (int)oneObject(ti->ofIn,'S')) ;
+	      md += nS ; nM -= nS ; // eat the deleted chars
+	      while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0') ; --nM ; }
+	      break ;
+	    case 3: // MATCH (or EQUAL or DIFF)
+	      while (nS)
+		{ while (nS && nR) { mLine[iS++] = '.' ; --nR ; --nS ; }
+		  if (nS && !nR)
+		      { // encode the edit
+			mLine[iS] = (qual[iS]<25)?tolower(*md++):toupper(*md++) ; --nM ;
+			++iS ; --nS ;
+			while (nM && (*md >= '0' && *md <= '9')) {nR = nR*10 +(*md++ - '0'); --nM; }
+		      }
+		}
+	      break ;
+	    }
+	}
+      if (iS != seqLen) die ("iS %d != seqLen %d", iS, seqLen) ;
+      if (mFlags & BAM_FREVERSE) // need to reverse-complement mLine
+	{ int i, j ;
+	  for (i = 0, j = seqLen ; i < --j ; ++i)
+	    { char t = mLine[i] ; mLine[i] = mMap[mLine[j]] ; mLine[j] = mMap[t] ; }
+	  if (i == j) mLine[i] = mMap[mLine[i]] ;
+	}
       oneInt(ti->ofOut,0) = mScore ;
       oneWriteLine (ti->ofOut, 'M', seqLen, mLine) ;
+      
       for (i = 0 ; i < arrayMax(aTx) ; ++i)
 	{ tx = arrp(aTx,i,TaxInfo) ;
 	  oneInt(ti->ofOut,0) = tx->txid ;
@@ -440,6 +467,8 @@ static void *b2rThread (void *arg)
     }
 
   newFree (mLine, seqLenMax, char) ;
+  newFree (mMD, seqLenMax, char) ;
+  newFree (mCigar, seqLenMax, I64) ;
   hashDestroy (hTx) ; arrayDestroy (aTx) ;
   return 0 ;
 }
@@ -611,23 +640,34 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
   // deal with the targets - first sort them, allowing for tid 0 = * (no target)
   int i, *revMap = new(nTargets,int) ;
   for (i = 0 ; i < nTargets ; ++i) revMap[i] = i ;
-  qsort_r (revMap, nTargets, sizeof(int), bf->h->target_name, accOrder) ;
+  
+#if defined(_GNU_SOURCE) || defined(__GLIBC__)
+  qsort_r(revMap, nTargets, sizeof(int), accOrder, bf->h->target_name);  // GNU/Linux glibc version
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
+  qsort_r(revMap, nTargets, sizeof(int), bf->h->target_name, accOrder);  // BSD version (different parameter order!)
+#else
+  QSORT_ARG = bf->h->target_name ;
+  qsort (revMap, nTargets, sizeof(int), accOrderBare) ;
+#endif 
+
   printf ("sorted the targets: ") ; timeUpdate (stdout) ;
   // next merge the targets to the taxid file to identify the taxids
   int *taxid = new0(nTargets+1,int) ;
   FILE *tf = fzopen (taxidFileName, "r") ;
   if (!tf) die ("failed to open taxid file %s", taxidFileName) ;
   char accBuf[32] ; *accBuf = 0 ;
-  int  txid, nFound = 0, comp ;
+  int  txid, nFound = 0, nT = 0, comp ;
   for (i = 0 ; i < nTargets ; ++i)
     { char *acc = bf->h->target_name[revMap[i]] ;
       while ((comp = strcmp (accBuf, acc)) < 0)
-	if (fscanf (tf, "%s\t%d\n", accBuf, &txid) != 2) break ;
+	{ if (fscanf (tf, "%s\t%d\n", accBuf, &txid) != 2) break ;
+	  ++nT ;
+	}
       if (!comp) { taxid[revMap[i]+1] = txid ; ++nFound ; }
     }
   fclose (tf) ;
   newFree (revMap, nTargets, int) ;
-  printf ("found %d taxids (missing %d): ", nFound, nTargets-nFound) ; timeUpdate (stdout) ;
+  printf ("found %d taxids from %d refs (missing %d): ", nFound, nT, nTargets-nFound) ; timeUpdate (stdout) ;
 
   int    lastqNameSize = prefixLen + maxChars + 1 ;
   char  *lastqName     = new (lastqNameSize,char) ; *lastqName = 0 ;
