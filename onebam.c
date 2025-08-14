@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 23:30 2025 (rd109)
+ * Last edited: Aug 14 00:15 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -51,6 +51,12 @@ static char usage[] =
   "         NB you must use '-aux AS:i s -aux MD:Z m' if you plant to use your .1bam to make .1read\n"
   "      -names                           keep sequence names [default to drop names]\n"
   "      -cramref <file_name|URL>         reference for CRAM - needed to read cram\n"
+  "    1bam21read <XX.1bam>          convert .1bam file to .1read (simplified information per read)\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
+  "    merge1read [*.1read]+          merge .1read files\n"
+  "      -o <ZZ.1read>                    output file - default is 'combined.1read'\n"
+#ifndef HIDE
   "    1bam2bam <XX.1bam>            back-convert .1bam to .bam\n"
   "      -o <ZZ.bam>                      output file - default is XX.bam for input XX.1bam\n"
   "    makebin <taxid.tsv> <XX.bam>  make fixed-width .alb and .txb binary files from bam file\n"
@@ -61,16 +67,6 @@ static char usage[] =
   "      -maxEdit <n>                     maximum number of edits for read to be in .alb file [8]\n"
   "    albReport <XX.alb>            report edit (damage) distribution etc. from .alb file\n"
   "      -o <filename>                    write the report to filenam - default is stdout\n"
-#ifndef HIDE
-  "    1bam21read <XX.1bam>          convert .1bam file to .1read (simplified information per read)\n"
-  "      -T <nthreads>                    number of threads [8]\n"
-  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
-  "    bin21bam <YY.1seq> <XX.bin>   make .1bam file from sorted .bin and .1seq\n"
-  "      -T <nthreads>                    number of threads [8]\n"
-  "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bin\n"
-  "    bin21read <XX>                make .1read file from sorted binary XX.alb and XX.txb files\n"
-  "      -T <nthreads>                    number of threads [8]\n"
-  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.{alb,txb}\n"
   "    numberSeq <XX.fq[.gz]>        make .1seq file from fq, plus new fq file with ints for names\n"
   "         NB will read and process fasta[.gz] or BAM/CRAM or even 1seq, as well as fastq[.gz]\n"
   "      -oSeq <ZZ.1seq>                  .1seq output file - default is XX.1seq for input XX.fq\n"
@@ -106,7 +102,7 @@ int main (int argc, char *argv[])
 	else die ("unknown onebam bam21bam option %s - run without args for usage", *argv) ;
       if (argc != 1) die ("onebam bam21bam needs 1 not %d args; run without args for usage", argc) ;
       if (!bam21bam (*argv, outFileName, taxidFileName, isNames))
-	  die ("failed to convert bam file %s", *argv) ;
+	die ("failed to convert bam file %s", *argv) ;
     }
   else if (!strcmp (command, "1bam21read"))
     { while (argc && **argv == '-')
@@ -117,6 +113,16 @@ int main (int argc, char *argv[])
       if (argc != 1) die ("onebam make1read needs 1 not %d args; run without args for usage", argc) ;
       if (!bamMake1read (*argv, outFileName))
 	die ("failed to convert .1bam file %s to .1read", *argv) ;
+    }
+  else if (!strcmp (command, "merge1read"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam merge1read option %s - run without args for usage", *argv) ;
+      if (argc < 2)
+	die ("onebam merge1read needs at least 2 not %d args; run without args for usage", argc) ;
+      if (!merge1read (outFileName, argc, argv))
+	die ("failed to merge .1read files") ;
     }
   else if (!strcmp (command, "numberSeq"))
     { char *outFqName = 0 ;
@@ -160,24 +166,6 @@ int main (int argc, char *argv[])
 	else die ("unknown onebam albReport option %s - run without args for usage", *argv) ;
       if (argc != 1) die ("onebam albReport needs 1 not %d args; run without args for usage",argc) ;
       albReport (*argv, outFileName) ;
-    }
-  else if (!strcmp (command, "bin21bam"))
-    { while (argc && **argv == '-')
-	if (!strcmp (*argv, "-T") && argc > 1) { NTHREAD = atoi(argv[1]) ; argc -= 2 ; argv += 2 ; }
-	else if (!strcmp (*argv, "-o") && argc > 1)
-	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else die ("unknown onebam bin21bam option %s - run without args for usage", *argv) ;
-      if (argc != 2) die ("onebam bin21bam needs 2 not %d args; run without args for usage", argc) ;
-      die ("bin21bam not implemented yet") ;
-     }
-  else if (!strcmp (command, "bin21read"))
-    { while (argc && **argv == '-')
-	if (!strcmp (*argv, "-T") && argc > 1) { NTHREAD = atoi(argv[1]) ; argc -= 2 ; argv += 2 ; }
-	else if (!strcmp (*argv, "-o") && argc > 1)
-	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else die ("unknown onebam bin21read option %s - run without args for usage", *argv) ;
-      if (argc != 2) die ("onebam bin21read needs 2 not %d args; run without args for usage", argc) ;
-      die ("bin21read not implemented yet") ;
     }
   else
     die ("unknown onebam command %s - run without arguments for usage", command) ;

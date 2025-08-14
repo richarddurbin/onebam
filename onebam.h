@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug  4 23:33 2025 (rd109)
+ * Last edited: Aug 14 00:15 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -14,6 +14,8 @@
 #include "array.h"
 #include "hash.h"
 #include "ONElib.h"
+
+#define VERSION "0.2"
 
 static char *schemaText =
   "1 3 def 1 0                  schema for onebam\n"
@@ -36,13 +38,13 @@ static char *schemaText =
   "G S                          groups sequences\n"
   ".\n"
   "O S 1 3 DNA                  the sequence\n"
+  "D J 2 3 INT 6 STRING         identifier: updates previous with <STRING> from character <INT>\n"
   "D N 3 3 INT 4 CHAR 3 INT     non-acgt base: pos (0-indexed), base, number\n"
   "D Q 1 6 STRING               quality: Q values (ascii string = q+33)\n"
   ". // the following lines for 1read\n"
-  "D T 3 3 INT 3 INT 3 INT      TaxID, best score(AS), count of records to this taxid\n"
   "D M 2 3 INT 6 STRING         match string: . for match, ACGT for HiQ sub, acgt for lowQ sub, - for delete\n"
+  "D T 3 3 INT 3 INT 3 INT      TaxID, best score(AS), count of records to this taxid\n"
   ". // the following lines for 1bam\n"
-  "D J 2 3 INT 6 STRING         identifier: updates previous with <STRING> from character <INT>\n"
   "D B 5 3 INT 3 INT 3 INT 3 INT 8 INT_LIST"
   " BAM line: flags, target, pos, mapq, cigar (stored as BAM I32s) - can have multiple per sequence\n"
   "D X 3 3 INT 3 INT 3 INT      next fragment line for last B line: RNEXT, PNEXT, TLEN\n" ;
@@ -59,6 +61,9 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
 bool bamMake1read (char *bamOneFileName, char *outFileName) ;
 bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxidFileName,
 	      int maxEdit, int prefix, int maxChars) ;
+
+// oneread.c
+bool merge1read (char *outfile, int nIn, char **infiles) ;
 
 // albcode.c
 void albReport (char *fileName, char *outFileName) ;
