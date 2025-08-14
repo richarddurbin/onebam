@@ -37,6 +37,9 @@ ONElib.o: ONElib.c ONElib.h
 onebamhts.o: onebamhts.c onebam.h
 	$(CC) $(CFLAGS) $(HTS_OPTS) -c $^
 
+oneread.o: oneread.c onebam.h merge.h
+	$(CC) $(CFLAGS) $(HTS_OPTS) -c $^
+
 albcode.o: albcode.c onebam.h
 	$(CC) $(CFLAGS) $(HTS_OPTS) -c $^
 
@@ -45,7 +48,7 @@ seqio.o: seqio.c seqio.h
 
 ### programs
 
-onebam: onebam.c onebamhts.o seqio.o albcode.o ONElib.o $(UTILS_OBJS)
+onebam: onebam.c onebamhts.o oneread.o seqio.o albcode.o ONElib.o $(UTILS_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(SEQIO_LIBS) $(HTS_LIBS) $(LIBS)
 
 ONEview: ONEview.c ONElib.o
