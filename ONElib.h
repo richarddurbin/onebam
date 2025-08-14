@@ -7,7 +7,7 @@
  *  Copyright (C) Richard Durbin, Gene Myers, 2019-
  *
  * HISTORY:
- * Last edited: Jul  2 16:15 2025 (rd109)
+ * Last edited: Aug 14 00:56 2025 (rd109)
  * * Dec  3 06:01 2022 (rd109): remove oneWriteHeader(), switch to stdarg for oneWriteComment etc.
  *   * Dec 27 09:46 2019 (gene): style edits
  *   * Created: Sat Feb 23 10:12:43 2019 (rd109)
@@ -20,6 +20,7 @@
 #include <stdio.h>    // for FILE etc.
 #include <stdarg.h>   // for formatted writing in oneWriteComment(), oneAddProvenance()
 #include <stdbool.h>  // for standard bool types
+#include <string.h>   // for memcpy
 #include <limits.h>   // for INT_MAX etc.
 #include <pthread.h>
 
@@ -375,15 +376,20 @@ void oneWriteLine (OneFile *of, char lineType, I64 listLen, void *listBuf);
   // For lists, give the length in the listLen argument, and either place the list data in your
   //   own buffer and give it as listBuf, or put in the line's buffer and set listBuf == NULL.
 
-void oneWriteLineFrom (OneFile *of, OneFile *source) ; // copies a line from source into of
 void oneWriteLineDNA2bit (OneFile *of, char lineType, I64 listLen, U8 *dnaBuf);
 
-// Minor variants of oneWriteLine().
-// Use oneWriteLineDNA2bit for DNA lists if your DNA is already 2-bit compressed.
+  // Use oneWriteLineDNA2bit for DNA lists if your DNA is already 2-bit compressed.
 
 void oneWriteComment (OneFile *of, char *format, ...); // can not include newline \n chars
 
   // Adds a comment to the current line. Extends line in ascii, adds special line type in binary.
+
+static inline void oneWriteLineFrom (OneFile *of, OneFile *source)
+{ memcpy (of->field, source->field, source->info[source->lineType]->nField*sizeof(OneField)) ;
+  oneWriteLine (of, source->lineType, oneLen(source), _oneList(source)) ;
+  char *s = oneReadComment (source) ; if (s) oneWriteComment (of, "%s", s) ;
+}
+  // utility to transfer a line from source through to ref without the local code knowing the schema
 
 // CLOSING FILES (FOR BOTH READ & WRITE):
 
