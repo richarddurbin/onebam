@@ -5,7 +5,7 @@
  * Description: implementations of Gene Myers heap merging algorithms
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 11 09:31 2025 (rd109)
+ * Last edited: Aug 14 01:03 2025 (rd109)
  * Created: Sat Aug  9 18:05:50 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -24,7 +24,7 @@ typedef struct {
   bool  (*yieldI32)(int t, void *arg, I32 *v) ; // client function to give next value of input t
   I32    *V ;     // 0..T - Gene's collision (int) V: current value of the t'th input
   bool   *L, *R ; // 1..T - Gene's L and R: is equal to left child, right child
-  bool  (*yieldString)(int t, void *arg, char **v) ; // same for strings
+  bool  (*yieldString)(int t, void *arg, char **v, int *p) ; // same for strings
   char  **S ;     // 1..T - Gene's string V
   int    *P ;     // 1..T - Gene's P: the LCP to the parent
 } Merge ;
@@ -121,7 +121,7 @@ static void printHeapString (Merge *m) // for debug
 
 #define DEBUG(x) // printf(x)
 
-static void heapifyString (Merge *m, int i, char *x, int t) // collision heap from Figure 3
+static void heapifyString (Merge *m, int i, char *x, int t, int p) // collision heap from Figure 3
 {
   int    l,   r ;  // left and right
   int    hl,  hr ; // left and right indexes
@@ -131,7 +131,8 @@ static void heapifyString (Merge *m, int i, char *x, int t) // collision heap fr
   //  printf ("heapify %s t %d at i %d", x, t, i) ;
   
   int    c = i ;
-  int    p = lcp2 (m->S[m->H[i]],x,0) ;
+
+  if (p == -1) p = lcp2 (m->S[m->H[i]],x,0) ; // the yieldString call did not pass the lcp
   
   while ((l = 2*c) <= m->T) // we will break once we find where to place x
     { hl = m->H[l] ; pl = m->P[l] ;
@@ -273,7 +274,7 @@ Merge *mergeCreateI32 (int T, void *arg, bool (*yield)(int t, void *x, I32 *v))
   return m ;
 }
 
-Merge *mergeCreateString (int T, void *arg, bool (*yield)(int t, void *x, char **s))
+Merge *mergeCreateString (int T, void *arg, bool (*yield)(int t, void *x, char **s, int *p))
 {
   Merge *m = mCreate (T, arg) ;
   m->S = new0 (T+1, char*) ;
@@ -350,12 +351,13 @@ int mergeNext (Merge *m, int **tList) // returns the number of entries in m->G, 
     { char *s ;
       // printf ("entering mergeNext nG %d\n", m->nG) ;
       for (k = 0 ; k < m->nG ; ++k)
-	{ bool res = (m->yieldString)(m->HG[k], m->arg, &s) ;
+	{ int p = -1 ;
+	  bool res = (m->yieldString)(m->HG[k], m->arg, &s, &p) ;
 	  // printf ("  yield k %d HG[k] %d G[k] %d s %s\n", k, m->HG[k], m->G[k], s) ;
 	  if (res)
-	    heapifyString (m, m->G[k], s, m->HG[k]+1) ; // recall that HG is one less than H[G]
+	    heapifyString (m, m->G[k], s, m->HG[k]+1, p) ; // recall that HG is one less than H[G]
 	  else
-	    heapifyString (m, m->G[k], LAST, 0) ;
+	    heapifyString (m, m->G[k], LAST, 0, 0) ;
 	}
       if (!m->H[1]) return 0 ; // we are done
       m->nG = addToCohortString (m, 1, 0) ; // add 1 and anything below with equal value to return list
@@ -377,8 +379,8 @@ typedef struct {
 
 static bool yield (int t, void *arg, I32 *v)
 { ListSet *ls = (ListSet*)arg ;
-  printf ("  yield called on input %d\n", t) ;
-  printf ("    ls->i[t] %d ls->n[t] %d\n", ls->i[t], ls->n[t]) ;
+  // printf ("  yield called on input %d\n", t) ;
+  // printf ("    ls->i[t] %d ls->n[t] %d\n", ls->i[t], ls->n[t]) ;
   if (ls->i[t] < ls->n[t])
     { *v = ls->val[t][(ls->i[t])++] ; return true ; }
   else
@@ -440,7 +442,7 @@ typedef struct {
   char ***val ; // the lists themselves
 } ListSet ;
 
-static bool yield (int t, void *arg, char **s)
+static bool yield (int t, void *arg, char **s, int *p)
 { ListSet *ls = (ListSet*)arg ;
   //  printf ("  yield called on input %d\n", t) ;
   //  printf ("    ls->i[t] %d ls->n[t] %d\n", ls->i[t], ls->n[t]) ;

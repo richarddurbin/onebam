@@ -5,7 +5,7 @@
  * Description: implementations of Gene Myers heap merging algorithms
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 10 15:00 2025 (rd109)
+ * Last edited: Aug 13 15:29 2025 (rd109)
  * * Aug 10 11:51 2025 (rd109): see TEST in merge.c for example usage
  * Created: Sat Aug  9 23:19:03 2025 (rd109)
  *-------------------------------------------------------------------
@@ -17,10 +17,12 @@
 typedef void Merge ;
 #endif
 
-Merge *mergeCreateI32 (int T, void *x, bool (*yield)(int t, void* x, I32 *v)) ;
-Merge *mergeCreateString (int T, void *x, bool (*yield)(int t, void* x, char **v)) ;
+Merge *mergeCreateI32 (int T, void *arg, bool (*yield)(int t, void* arg, I32 *v)) ;
+// yield is a callback to return true with the next value on input stream t in *v, or false at end
+Merge *mergeCreateString (int T, void *arg, bool (*yield)(int t, void* arg, char **v, int *lcp)) ;
+// yield returns the next full string in **v, with optionally the lcp to the last value in *lcp
 void   mergeDestroy (Merge *m) ;
-void   mergeRecreate (Merge *m, int T, void *x) ; // reset using existing allocated structures
+void   mergeRecreate (Merge *m, int T, void *arg) ; // reset using existing allocated structures
 // the puropose of mergeRecreate is to allow lightweight use for many merges of small sets
 int    mergeNext (Merge *m, int **tList) ; // returns number of items with next smallest value
                                            // *tList contains a list of the input indices
