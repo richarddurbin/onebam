@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 13 00:43 2025 (rd109)
+ * Last edited: Aug 13 23:11 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -144,7 +144,7 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
   if (outFileName) of = oneFileOpenWriteNew (outFileName, schema, "bam", true, 1) ;
   else of = oneFileOpenWriteNew (derivedName (bamFileName, "1bam"), schema, "bam", true, 1) ;
   if (!of) die ("failed to open ONEfile %s to write", outFileName) ;
-  oneAddProvenance (of, "onebam", "0.1", getCommandLine()) ;
+  oneAddProvenance (of, "onebam", VERSION, getCommandLine()) ;
   if (auxFields && arrayMax(auxFields))
     for (i = 0 ; i < arrayMax(auxFields) ; ++i)
       { AuxField *a = arrp(auxFields,i,AuxField) ;
@@ -223,6 +223,15 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
 	    for (i = 0, s = seq ; i < seqLen ; ++i)
 	      *s++ = binaryAmbig2text[bam_seqi(bseq,i)] ;
 	  oneWriteLine (of, 'S', seqLen, seq) ;
+	  // now we write the name change, if requested
+	  ENSURE_BUF_SIZE (lastqName, lastqNameSize, bf->b->core.l_qname, char) ; // needed whether isNames or not
+	  if (isNames) // write the new name suffix in a J line - saves space over I lines with full name
+	    { char *p = lastqName, *q = qName ;
+	      while (*p && *p == *q) { ++p ; ++q ; }
+	      oneInt(of,0) =(I64)(q - qName) ;
+	      oneWriteLine (of, 'J', strlen(q), q) ;
+	    }
+	  strcpy (lastqName, qName) ;
 	  for (i = 0 ; i < seqLen ; ++i) // write exceptions for non-ACGT characters
 	    if (!acgtCheck[(int)seq[i]])
 	      { oneInt(of,0) = i ;
@@ -241,15 +250,6 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
 		for (i = 0 ; i < seqLen ; ++i) bq[i] += 33 ;
 	      oneWriteLine (of, 'Q', seqLen, bq) ;
 	    }
-	  // now we can write the name change, if requested
-	  ENSURE_BUF_SIZE (lastqName, lastqNameSize, bf->b->core.l_qname, char) ; // needed whether isNames or not
-	  if (isNames) // write the new name suffix in a J line - saves space over I lines with full name
-	    { char *p = lastqName, *q = qName ;
-	      while (*p && *p == *q) { ++p ; ++q ; }
-	      oneInt(of,0) =(I64)(q - qName) ;
-	      oneWriteLine (of, 'J', strlen(q), q) ;
-	    }
-	  strcpy (lastqName, qName) ;
 	} // end of new query sequence block
 
       // write B line, which is the core bam line
@@ -325,6 +325,11 @@ typedef struct {
   U16 count ;
   I16 bestScore ;
 } TaxInfo ; // info per taxid for this thread
+
+int txCompare (const void *a, const void *b)
+{ TaxInfo *txa = (TaxInfo*)a, *txb = (TaxInfo*)b ;
+  return txa->txid - txb->txid ;
+}
 
 #include <ctype.h>	// for tolower(), toupper()
 
@@ -447,6 +452,7 @@ static void *b2rThread (void *arg)
       oneInt(ti->ofOut,0) = mScore ;
       oneWriteLine (ti->ofOut, 'M', seqLen, mLine) ;
       
+      if (arrayMax(aTx) > 1) arraySort (aTx, txCompare) ;
       for (i = 0 ; i < arrayMax(aTx) ; ++i)
 	{ tx = arrp(aTx,i,TaxInfo) ;
 	  oneInt(ti->ofOut,0) = tx->txid ;
@@ -473,7 +479,7 @@ bool bamMake1read (char *inFileName, char *outFileName)
   if (!outFileName) outFileName = derivedName (inFileName, "1read") ;
   OneFile *ofOut = oneFileOpenWriteNew (outFileName, schema, "read", true, NTHREAD) ;
   if (!ofOut) { oneFileClose(ofIn) ; warn ("failed to open %s", outFileName) ; return false ; }
-  oneAddProvenance (ofOut, "onebam", "0.1", getCommandLine()) ;
+  oneAddProvenance (ofOut, "onebam", VERSION, getCommandLine()) ;
 
   I64 nRef ; oneStats (ofIn, 'R', &nRef, 0, 0) ;
   int *taxid = new (nRef, int) ;
@@ -593,12 +599,6 @@ static U8 uu3[] = { 0, 0, 64, 0, 128, 0, 0, 0, 192, 0, 0, 0, 0, 0, 0, 0 } ;
   if (ret != 1) die ("failed name write to .alb - ret %d ferror %d", ret, ferror(fAlb)) ; \
   ret = fwrite (edits, 2*maxEdit+12, 1, fAlb) ;	\
   if (ret != 1) die ("failed data write to .alb - ret %d ferror %d", ret, ferror(fAlb))
-
-
-int txCompare (const void *a, const void *b)
-{ TaxInfo *txa = (TaxInfo*)a, *txb = (TaxInfo*)b ;
-  return txa->txid - txb->txid ;
-}
 
 void reportTxb (FILE *fTxb, char *nameBuf, int maxChars, Array aTx)
 { if (arrayMax(aTx))
