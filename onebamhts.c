@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 13 23:11 2025 (rd109)
+ * Last edited: Aug 21 23:50 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -482,7 +482,7 @@ bool bamMake1read (char *inFileName, char *outFileName)
   oneAddProvenance (ofOut, "onebam", VERSION, getCommandLine()) ;
 
   I64 nRef ; oneStats (ofIn, 'R', &nRef, 0, 0) ;
-  int *taxid = new (nRef, int) ;
+  int *taxid = new (nRef+1, int) ;
   int i = 0 ;
   taxid[i++] = 0 ; // initial taxid is 0
   oneGoto (ofIn, 'R', 1) ;
