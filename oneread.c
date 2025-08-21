@@ -5,7 +5,7 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 14 01:46 2025 (rd109)
+ * Last edited: Aug 21 23:52 2025 (rd109)
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -31,7 +31,7 @@ bool yieldName (int t, void *arg, char **v, int *lcp) // here arg is an array of
 
 bool yieldTx (int t, void *arg, I32 *v) // here arg is an array of OneFile
 {
-  OneFile *of = &(((OneFile*)arg)[t]) ;
+  OneFile *of = (((OneFile**)arg)[t]) ;
   if (of) { *v = oneInt(of,0) ; return true ; }
   else return false ;
 }
@@ -57,7 +57,7 @@ bool merge1read (char *outfile, int nIn, char **infiles)
   OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
 
   if (!outfile) outfile = "merged.1read" ;
-  OneFile *ofOut = oneFileOpenWriteNew (outfile, schema, "read", true, NTHREAD) ;
+  OneFile *ofOut = oneFileOpenWriteNew (outfile, schema, "read", true, 1) ;
   if (!ofOut) { warn ("failed to open %s to write", outfile) ; return false ; }
   oneAddProvenance (ofOut, "onebam", VERSION, getCommandLine()) ;
 
@@ -105,18 +105,20 @@ bool merge1read (char *outfile, int nIn, char **infiles)
 
       if (nName == 1) // all very simple - go to next S line
 	{ while ((t = oneReadLine(in->of)) && t != 'S')
-	    transferLine (ofOut, in->of) ; // copy line
+	    { oneWriteLineFrom (ofOut, in->of) ; // copy line
+	      if (t == 'T') ++nTin ;
+	    }
 	  if (t) { loadSequence (in) ; ++nSin ; }
 	  else in->of = 0 ; // termination index for this input for readMerge
 	}
-      else
+      else // multiple input streams for the same read
 	{ // first copy all lines up to M, which should be the same across all inputs
 	  while ((t = oneReadLine(in->of)) && t != 'M')  // there should be an M line for each object
-	    transferLine (ofOut, in->of) ; // copy line
+	    oneWriteLineFrom (ofOut, in->of) ; // copy line
 	  if (t != 'M') die ("failed to find M line on input %s", inputs[nameList[0]].fileName) ;
 	  for (i = 1 ; i < nName ; ++i)
 	    { txOf[i] = inputs[nameList[i]].of ; // will need this later, and it is more direct
-	      while ((t = oneReadLine(txOf[i]) && t != 'M')) ; // read these lines also
+	      while ((t = oneReadLine(txOf[i])) && t != 'M') ; // read these lines also
 	      if (t != 'M') die ("failed to find M line on input %s", inputs[nameList[i]].fileName) ;
 	    }
 	  txOf[0] = in->of ;
@@ -126,7 +128,7 @@ bool merge1read (char *outfile, int nIn, char **infiles)
 	  OneFile *ofM = in->of ;
 	  for (i = 1 ; i < nName ; ++i)
 	    if (oneInt(txOf[i],0) > mMax) { ofM = txOf[i] ; mMax = oneInt(ofM,0) ; }
-	  transferLine (ofOut, ofM) ; // copy the highest scoring M line
+	  oneWriteLineFrom (ofOut, ofM) ; // copy the highest scoring M line
 	  
 	  // move each txOf[] to the next line, which should be the first T line, and set up txMerge
 	  for (i = 0 ; i < nName ; ++i)
@@ -137,26 +139,27 @@ bool merge1read (char *outfile, int nIn, char **infiles)
 
 	  // and merge the taxids
 	  while ((nTx = mergeNext (txMerge, &txList)))
-	    { oneInt(ofOut,0) = oneInt(txOf[0],0) ; // copy the taxid
-	      oneInt(ofOut,1) = oneInt(txOf[0],1) ; // take the max of the best scores
-	      oneInt(ofOut,2) = oneInt(txOf[0],2) ; // sum the counts
+	    { OneFile *ofTx = txOf[txList[0]] ;
+	      oneInt(ofOut,0) = oneInt(ofTx,0) ; // copy the taxid
+	      oneInt(ofOut,1) = oneInt(ofTx,1) ; // take the max of the best scores
+	      oneInt(ofOut,2) = oneInt(ofTx,2) ; // sum the counts
 	      for (i = 1 ; i < nTx ; ++i)
-		{ if (oneInt(txOf[txList[i]],1) > oneInt(ofOut,1))
-		    oneInt(ofOut,1) = oneInt(txOf[txList[i]],1) ;
-		  oneInt(ofOut,2) += oneInt(txOf[txList[i]],2) ;
+		{ ofTx = txOf[txList[i]] ;
+		  if (oneInt(ofTx,1) > oneInt(ofOut,1)) oneInt(ofOut,1) = oneInt(ofTx,1) ;
+		  oneInt(ofOut,2) += oneInt(ofTx,2) ;
 		}
 	      oneWriteLine (ofOut, 'T', 0, 0) ;
 	      // now advance each line, and set txOf[] to 0 if not 'T'
 	      for (i = 0 ; i < nTx ; ++i)
-		if (oneReadLine (txOf[i]) == 'T') ++nTin ;
-		else txOf[i] = 0 ; // terminator for the txMerge
+		if (oneReadLine (txOf[txList[i]]) == 'T') ++nTin ;
+		else txOf[txList[i]] = 0 ; // terminator for the txMerge
 	    }
 
 	  // finally update the sequence and name in the inputs[] for the nameList 
 	  for (i = 0 ; i < nName ; ++i)
 	    { Input *in = &inputs[nameList[i]] ;
-	      if (in->of->lineType)	{ loadSequence (in) ; ++nSin ; }
-	      else in->of = 0 ; // terminator for the nameMerge
+	      if (in->of->lineType) { loadSequence (in) ; ++nSin ; }
+	      else { oneFileClose (in->of) ; in->of = 0 ; } // terminator for the nameMerge
 	    }
 	}
     }
@@ -169,7 +172,9 @@ bool merge1read (char *outfile, int nIn, char **infiles)
 	  oneFileName(ofOut), (long long)nSout, (long long)nTout) ;
 
   oneFileClose (ofOut) ;
-  for (i = 0 ; i < nIn ; ++i) oneFileClose (inputs[i].of) ;
+
+  mergeDestroy (readMerge) ;
+  mergeDestroy (txMerge) ;
 
   newFree (inputs, nIn, Input) ;
   newFree (txOf, nIn, OneFile) ;
