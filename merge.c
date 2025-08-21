@@ -5,7 +5,7 @@
  * Description: implementations of Gene Myers heap merging algorithms
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 14 01:03 2025 (rd109)
+ * Last edited: Aug 21 23:36 2025 (rd109)
  * Created: Sat Aug  9 18:05:50 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -335,7 +335,7 @@ int mergeNext (Merge *m, int **tList) // returns the number of entries in m->G, 
   int k ;
   if (m->V)
     { I32 x ;
-      // printf ("entering mergeNext nG %d\n", m->nG) ;
+      // printf ("entering mergeNext I32 nG %d\n", m->nG) ;
       for (k = 0 ; k < m->nG ; ++k)
 	{ bool res = (m->yieldI32)(m->HG[k], m->arg, &x) ;
 	  //	  printf ("  yield k %d HG[k] %d G[k] %d x %d\n", k, m->HG[k], m->G[k], x) ;
@@ -349,7 +349,7 @@ int mergeNext (Merge *m, int **tList) // returns the number of entries in m->G, 
     }
   else // string
     { char *s ;
-      // printf ("entering mergeNext nG %d\n", m->nG) ;
+      // printf ("entering mergeNext string nG %d\n", m->nG) ;
       for (k = 0 ; k < m->nG ; ++k)
 	{ int p = -1 ;
 	  bool res = (m->yieldString)(m->HG[k], m->arg, &s, &p) ;
@@ -363,6 +363,7 @@ int mergeNext (Merge *m, int **tList) // returns the number of entries in m->G, 
       m->nG = addToCohortString (m, 1, 0) ; // add 1 and anything below with equal value to return list
     }
   if (tList) *tList = m->HG ;
+  // printf ("  leaving mergeNext\n") ;
   return m->nG ;
 }
 
