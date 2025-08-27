@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 14 00:15 2025 (rd109)
+ * Last edited: Aug 27 11:17 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -39,10 +39,16 @@ char *derivedName (char *inName, char *tag)
   return ret ;
 }
 
+#define HIDE
+
 static char usage[] =
   "Usage: onebam <command> <options>* <args>*\n"
   "  options and arguments depend on the command\n"
   "  commands with arguments, each followed by their options:\n"
+  "    bam21read <taxid.tsv[.gz]> <XX.bam>  convert BAM/SAM/CRAM file to .1read\n"
+  "      -o <ZZ.1read>                    output file - default is XX.1read for XX.bam input\n"
+  "    merge1read [*.1read]+          merge .1read files\n"
+  "      -o <ZZ.1read>                    output file - default is 'combined.1read'\n"
   "    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bam\n"
   "      -taxid <XX.tsv>                  file with lines <acc>\\ttaxid\\n sorted on acc\n"
@@ -54,8 +60,6 @@ static char usage[] =
   "    1bam21read <XX.1bam>          convert .1bam file to .1read (simplified information per read)\n"
   "      -T <nthreads>                    number of threads [8]\n"
   "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
-  "    merge1read [*.1read]+          merge .1read files\n"
-  "      -o <ZZ.1read>                    output file - default is 'combined.1read'\n"
 #ifndef HIDE
   "    1bam2bam <XX.1bam>            back-convert .1bam to .bam\n"
   "      -o <ZZ.bam>                      output file - default is XX.bam for input XX.1bam\n"
@@ -87,7 +91,27 @@ int main (int argc, char *argv[])
   char *taxidFileName = 0 ;
   bool  isNames = false ;
 
-  if (!strcmp (command, "bam21bam"))
+  if (!strcmp (command, "bam21read"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam bam21read option %s - run without args for usage", *argv) ;
+      if (argc != 2)
+	die ("onebam bam21read needs 2 not %d args; run without args for usage", argc) ;
+      if (!bam21read (argv[1], outFileName, argv[0]))
+	die ("failed to merge .1read files") ;
+    }
+  else if (!strcmp (command, "merge1read"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam merge1read option %s - run without args for usage", *argv) ;
+      if (argc < 2)
+	die ("onebam merge1read needs at least 2 not %d args; run without args for usage", argc) ;
+      if (!merge1read (outFileName, argc, argv))
+	die ("failed to merge .1read files") ;
+    }
+  else if (!strcmp (command, "bam21bam"))
     { while (argc && **argv == '-')
 	if (!strcmp (*argv, "-o") && argc > 1)
 	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
@@ -113,16 +137,6 @@ int main (int argc, char *argv[])
       if (argc != 1) die ("onebam make1read needs 1 not %d args; run without args for usage", argc) ;
       if (!bamMake1read (*argv, outFileName))
 	die ("failed to convert .1bam file %s to .1read", *argv) ;
-    }
-  else if (!strcmp (command, "merge1read"))
-    { while (argc && **argv == '-')
-	if (!strcmp (*argv, "-o") && argc > 1)
-	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else die ("unknown onebam merge1read option %s - run without args for usage", *argv) ;
-      if (argc < 2)
-	die ("onebam merge1read needs at least 2 not %d args; run without args for usage", argc) ;
-      if (!merge1read (outFileName, argc, argv))
-	die ("failed to merge .1read files") ;
     }
   else if (!strcmp (command, "numberSeq"))
     { char *outFqName = 0 ;

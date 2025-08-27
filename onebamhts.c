@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 21 23:50 2025 (rd109)
+ * Last edited: Aug 27 11:19 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -512,6 +512,291 @@ bool bamMake1read (char *inFileName, char *outFileName)
   fprintf (stderr, "built read records for %lld sequences: ", (long long) nSeq) ;
   timeUpdate (stderr) ;
   return true ;
+}
+
+/************************************************************************************/
+/*********** this is a merge of bam21bam() and bamMake1read() from Claude ***********/
+
+// this routine calculates the mismatch line in read space from the cigar and MD string
+// see  https://vincebuffalo.com/notes/2014/01/17/md-tags-in-bam-files.html for MD interpretation
+
+static void generateMline (char *mLine, int seqLen, I32 *cigar, char *md, bool isReverse)
+{
+  static char mMap[128] ;
+  static bool isFirst = true ;
+  if (isFirst)
+    { char *s = ".-acgtnACGTN", *t = ".-tgcanTGCAN";
+      while (*s) mMap[*s++] = *t++;
+      isFirst = false ;
+    }
+
+  int iS = 0 ; // position in sequence
+  int nCigar = 0 ; while (cigar[nCigar]) ++nCigar ;
+  int nM = strlen(md) ;
+  int nR = 0 ; while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0') ; --nM ; }
+  while (nCigar--)
+    { int nS = bam_cigar_oplen(*cigar), op = bam_cigar_op(*cigar++) ;
+      switch (bam_cigar_type(op))
+	{
+	case 0: // do nothing
+	  break ;
+	case 1: // INSERT (or SOFT_CLIP)
+	  { int i ; for (i = 0 ; i < nS ; ++i) mLine[iS++] = '-' ; }
+	  break ;
+	case 2: // DELETE (or REF_SKIP)
+	  if (nR)         die ("bad md match nR %d", nR) ;
+	  if (*md != '^') die ("bad delete char %c", *md) ;
+	  ++md ; --nM ; // eat the ^ character
+	  if (nM < nS)    die ("%d < %d delete chars", nM, nS) ;
+	  md += nS ; nM -= nS ; // eat the deleted chars
+	  while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0') ; --nM ; }
+	  break ;
+	case 3: // MATCH (or EQUAL or DIFF)
+	  while (nS)
+	    { while (nS && nR) { mLine[iS++] = '.' ; --nR ; --nS ; }
+	      if (nS && !nR)
+		{ // encode the edit
+		  mLine[iS] = *md++ ; --nM ;
+		  ++iS ; --nS ;
+		  while (nM && (*md >= '0' && *md <= '9')) {nR = nR*10 +(*md++ - '0'); --nM; }
+		}
+	    }
+	  break ;
+	}
+    }
+  if (iS != seqLen) die ("generateMline: iS %d != seqLen %d", iS, seqLen) ;
+  
+  if (isReverse) // need to reverse-complement mLine
+    { int i, j ;
+      for (i = 0, j = seqLen ; i < --j ; ++i)
+	{ char t = mLine[i] ; mLine[i] = mMap[mLine[j]] ; mLine[j] = mMap[t] ; }
+      if (i == j) mLine[i] = mMap[mLine[i]] ;
+    }
+}
+
+bool bam21read(char *bamFileName, char *outFileName, char *taxidFileName)
+{
+  BamFile *bf = bamFileOpenRead(bamFileName);
+  if (!bf) return false;
+  int nTargets = bf->h->n_targets;
+  printf("read %d references: ", nTargets); timeUpdate(stdout);
+
+  OneSchema *schema = oneSchemaCreateFromText(schemaText);
+  OneFile *of; // output file
+  if (outFileName) 
+    of = oneFileOpenWriteNew(outFileName, schema, "read", true, 1);
+  else 
+    of = oneFileOpenWriteNew(derivedName(bamFileName, "1read"), schema, "read", true, 1);
+  if (!of) die("failed to open ONEfile %s to write", outFileName);
+  oneAddProvenance(of, "onebam", VERSION, getCommandLine());
+
+  // Deal with targets - sort them and load taxids
+  int i, *revMap = new(nTargets, int);
+  for (i = 0; i < nTargets; ++i) revMap[i] = i;
+
+  NAMES = bf->h->target_name; qsort(revMap, nTargets, sizeof(int), accOrder);
+
+  int  *taxid = new0(nTargets+1, int);
+  FILE *tf = fzopen(taxidFileName, "r");
+  if (!tf) die("failed to open taxid file %s", taxidFileName);
+  char accBuf[32]; *accBuf = 0;
+  int  tid, nFound = 0, nT = 0, comp;
+  for (i = 0; i < nTargets; ++i)
+    { char *acc = bf->h->target_name[revMap[i]];
+      while ((comp = strcmp(accBuf, acc)) < 0)
+	{ if (fscanf(tf, "%s\t%d\n", accBuf, &tid) != 2) break;
+	  ++nT;
+	}
+      if (!comp) { taxid[revMap[i]+1] = tid; ++nFound; }
+    }
+  fclose(tf);
+  newFree(revMap, nTargets, int);
+  printf("found %d taxids in %d txid2acc entries: ", nFound, nT); timeUpdate(stdout);
+
+  // Buffers for processing
+  int lastqNameSize = 128;  char  *lastqName = new(lastqNameSize, char); *lastqName = 0;
+  int seqBufSize    = 1024; char  *seq       = new(seqBufSize, char);
+  int mLineSize     = 1024; char  *mLine     = new(mLineSize, char);
+  // int readGroupSize = 128;  char *readGroup = new(readGroupSize, char); *readGroup = 0;
+  
+  // Hash table and array for taxonomic info per sequence
+  Hash hTx = hashCreate(8192);
+  Array aTx = arrayCreate(2048, TaxInfo);
+
+  I64  nRecord      = 0;
+  I64  seqLen       = 0;
+  I32  maxScore     = -(1<<30);
+  bool isMaxReverse = false;
+  int  maxCigarSize = 1024; I32  *maxCigar = new(maxCigarSize, I32);
+  int  maxMdSize    = 1024; char *maxMd    = new(maxMdSize, char);
+
+  while (true) // main loop to read sequences
+    { ++nRecord;
+      int res = sam_read1(bf->f, bf->h, bf->b);
+      if (res < -1) die("bamProcess failed to read bam record %lld", (long long)nRecord);
+      if (res == -1) break; // end of file
+
+      I64   flag  = bf->b->core.flag;
+      char *qName = bam_get_qname(bf->b);
+    
+      if (strcmp(lastqName, qName)) // new query sequence
+	{
+	  // Process previous sequence if we have one
+	  if (*lastqName && maxScore > -(1<<30))
+	    {
+	      // Write max score and mismatch line from stored best alignment
+	      ENSURE_BUF_SIZE(mLine, mLineSize, seqLen+1, char);
+	      generateMline (mLine, seqLen, maxCigar, maxMd, isMaxReverse);
+	      oneInt(of, 0) = maxScore;
+	      oneWriteLine(of, 'M', seqLen, mLine);
+        
+	      // Write taxonomic information
+	      if (arrayMax(aTx) > 1) arraySort(aTx, txCompare);
+	      for (i = 0; i < arrayMax(aTx); ++i)
+		{ TaxInfo *tx = arrp(aTx, i, TaxInfo);
+		  oneInt(of, 0) = tx->txid;
+		  oneInt(of, 1) = tx->bestScore;
+		  oneInt(of, 2) = tx->count;
+		  oneWriteLine(of, 'T', 0, 0);
+		}
+	    }
+      
+	  // Reset for new sequence
+	  hashClear(hTx);
+	  arrayMax(aTx) = 0;
+	  maxScore      = -(1<<30);
+      
+	  /* Ignore read groups for now
+	  // The correct way to deal with them would be with a DICT, written with counts at the end
+	  // Then code reading .1read files would have to read in the DICT first
+	  U8 *aux;
+	  if ((aux = bam_aux_get(bf->b, "RG")) && (s = bam_aux2Z(aux)) && strcmp(s, readGroup))
+	    { I64 len = strlen(s);
+	      oneWriteLine(of, 'G', len, s);
+	      ENSURE_BUF_SIZE(readGroup, readGroupSize, len+1, char);
+	      strcpy(readGroup, s);
+	    }
+	  */
+      
+	  // Get new sequence
+	  seqLen = bf->b->core.l_qseq;
+	  ENSURE_BUF_SIZE(seq, seqBufSize, seqLen+1, char);
+	  char *s = seq, *bs = (char*)bam_get_seq(bf->b);
+	  if (flag & BAM_FREVERSE)
+	    for (i = seqLen; i--; )
+	      *s++ = binaryAmbig2text[(int)binaryAmbigComplement[(int)bam_seqi(bs,i)]];
+	  else
+	    for (i = 0; i < seqLen; ++i)
+	      *s++ = binaryAmbig2text[bam_seqi(bs,i)];
+	  *s = 0; // null terminate
+	  oneWriteLine(of, 'S', seqLen, seq);
+	  
+	  // Write name change as a J line
+	  ENSURE_BUF_SIZE(lastqName, lastqNameSize, bf->b->core.l_qname, char);
+	  char *p = lastqName, *q = qName;
+	  while (*p && *p == *q) { ++p; ++q; }
+	  oneInt(of, 0) = (I64)(q - qName);
+	  oneWriteLine(of, 'J', strlen(q), q);
+	  strcpy(lastqName, qName);
+      
+	  // Write sequence exceptions for non-ACGT
+	  for (i = 0; i < seqLen; ++i)
+	    if (!acgtCheck[(int)seq[i]])
+	      { oneInt(of, 0) = i;
+		char c = oneChar(of, 1) = seq[i];
+		I64 n = 1;
+		while (++i < seqLen && seq[i] == c) n++;
+		oneInt(of, 2) = n;
+		oneWriteLine(of, 'N', 0, 0);
+	      }
+      
+	  // Write qualities
+	  q = (char*)bam_get_qual(bf->b); // reuse p, q as utility char* from J line code
+	  if (*q != '\xff')
+	    { if (flag & BAM_FREVERSE)
+		{ char t ;
+		  for (p = q + seqLen ; p-- > q ; ++q) { t = *p + 33 ; *p = *q + 33 ; *q = t ; }
+		}
+	      else
+		for (i = 0; i < seqLen; ++i) q[i] += 33;
+	      oneWriteLine(of, 'Q', seqLen, q);
+	    }
+	} // end of new sequence block
+
+      // Process current alignment - first find the txid
+      TaxInfo *tx ;
+      int j, txid = taxid[bf->b->core.tid+1];
+      if (hashAdd(hTx, hashInt(txid), &j))
+	{ tx = arrayp(aTx, j, TaxInfo);
+	  tx->txid = txid;
+	  tx->count = 0;
+	  tx->bestScore = -(1<<14);
+	}
+      else 
+	tx = arrp(aTx, j, TaxInfo);
+      ++tx->count;
+    
+      // Get alignment score
+      U8 *aux;
+      if (!(aux = bam_aux_get(bf->b, "AS"))) continue; // skip if no score
+      int score = bam_aux2i(aux);
+      if (score > tx->bestScore) tx->bestScore = score;
+    
+      // Check if this is the best alignment for mLine calculation
+      if (score > maxScore)
+	{ maxScore = score;
+	  isMaxReverse = (flag & BAM_FREVERSE) ? true : false;
+
+	  // Store CIGAR
+	  I64 nCigar = bf->b->core.n_cigar;
+	  ENSURE_BUF_SIZE(maxCigar, maxCigarSize, nCigar+1, I32);
+	  memcpy (maxCigar, bam_get_cigar(bf->b), nCigar*sizeof(I32)) ;
+	  maxCigar[nCigar] = 0 ; // use this in generateMline()
+
+	  // Store MD string
+	  char *s ;
+	  if ((aux = bam_aux_get(bf->b, "MD")) && (s = bam_aux2Z(aux)))
+	    { ENSURE_BUF_SIZE(maxMd, maxMdSize, strlen(s)+1, char);
+	      strcpy(maxMd, s);
+	    }
+	  else
+	    *maxMd = 0 ;
+	}
+    }
+    
+  // Process final sequence
+  if (*lastqName && maxScore > -(1<<30)) // same code as above
+    {
+      ENSURE_BUF_SIZE(mLine, mLineSize, seqLen+1, char);
+      generateMline (mLine, seqLen, maxCigar, maxMd, isMaxReverse);
+      oneInt(of, 0) = maxScore;
+      oneWriteLine(of, 'M', seqLen, mLine);
+
+      if (arrayMax(aTx) > 1) arraySort(aTx, txCompare);
+      for (i = 0; i < arrayMax(aTx); ++i)
+	{ TaxInfo *tx = arrp(aTx, i, TaxInfo);
+	  oneInt(of, 0) = tx->txid;
+	  oneInt(of, 1) = tx->bestScore;
+	  oneInt(of, 2) = tx->count;
+	  oneWriteLine(of, 'T', 0, 0);
+	}
+    }
+
+  printf("processed %lld records\n", (long long)nRecord);
+  
+  // Cleanup
+  oneFileClose(of);
+  newFree(taxid, nTargets+1, int);
+  newFree(lastqName, lastqNameSize, char);
+  newFree(seq, seqBufSize, char);
+  newFree(mLine, mLineSize, char);
+  newFree(maxCigar, maxCigarSize, I32);
+  newFree(maxMd, maxMdSize, char);
+  hashDestroy(hTx);
+  arrayDestroy(aTx);
+  bamFileClose(bf);
+  
+  return true;
 }
 
 /*********************** binary files ***************************/
