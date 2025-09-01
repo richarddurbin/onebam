@@ -5,7 +5,7 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 21 23:52 2025 (rd109)
+ * Last edited: Aug 31 23:39 2025 (rd109)
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -179,6 +179,147 @@ bool merge1read (char *outfile, int nIn, char **infiles)
   newFree (inputs, nIn, Input) ;
   newFree (txOf, nIn, OneFile) ;
 
+  return true ;
+}
+
+/*********************************************************/
+
+bool report1read (char *readFileName, char *outFileName)
+{
+  int i, j, k ;
+  
+  // open the output file
+  FILE *fOut ;
+  if (outFileName)
+    { fOut = fopen (outFileName, "w") ;
+      if (!fOut) die ("failed to open output file %s", outFileName) ;
+    }
+  else
+    fOut = stdout ;
+
+  // open the 1read file
+  OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
+  OneFile   *of = oneFileOpenRead (readFileName, 0, "read", 1) ;
+  if (!of) die ("failed to open .1read file %s", readFileName) ;
+
+  // set up accumulation arrays - initialise to 0 by setting first element 0
+  U64  lengths[256] = {0} ;
+  U64  start[15][4][4] = {0}, end[15][4][4] = {0}, mid[4][4] = {0} ;
+  U64 *edits = new0 (256, U64) ;
+  U64 *scores = new0 (256, U64) ;
+  I32  minScore = I32MAX, maxScore = -I32MAX ;
+  int  maxEdit = 0 ;
+
+  int  map[256] ; for (i = 0 ; i < 256 ; ++i) map[i] = -1 ;
+  map['A']=map['a']=0 ; map['C']=map['c']=1 ; map['G']=map['g']=2 ; map['T']=map['t']=3 ;
+  char index2char[] = "acgt" ;
+  
+  // process records
+  U64 nRecord = 0 ;
+  if (!oneGoto (of, 'S', 1)) die ("no objects in 1read file %s", readFileName) ;
+  oneReadLine (of) ; // read the 'S' line
+  while (of->lineType == 'S')
+    { ++nRecord ;
+      int seqLen = oneLen(of) ;
+      ++lengths[seqLen] ;
+      char *seq = oneDNAchar(of) ;
+
+      // process the M line
+      while (oneReadLine (of) && of->lineType != 'M') if (of->lineType == 'S') continue ;
+      int score = oneInt(of,0) ;
+      if (score > maxScore) maxScore = score ;
+      if (score < minScore) minScore = score ;
+      if (score > 127 || score < -128) warn ("score %d record %llu", score, nRecord) ;
+      else ++scores[score+128] ;
+      char *m = oneString(of) ;
+      int nEdit = 0 ;
+      for (i = 0 ; i < seqLen ; ++i)
+	if (m[i] != '.') // an edit
+	  { ++nEdit ;
+	    int from = map[m[i]], to = map[seq[i]] ;
+	    if (from >= 0 && to >= 0)
+	      { if (i < 15) ++start[i][from][to] ;
+		else if (seqLen - 1 - i < 15) ++end[seqLen-1-i][from][to] ;
+		else ++mid[from][to] ;
+	      }
+	  }
+      ++edits[nEdit] ;
+      if (nEdit > maxEdit) maxEdit = nEdit ;
+
+      // for now skip all the T lines - should process them
+      while (oneReadLine (of) && of->lineType != 'S') ;
+    }
+  oneFileClose (of) ;
+
+  // report
+  fprintf (fOut, "RECORDS %llu\n", nRecord) ;
+  if (nRecord)
+    { int min = 0, max = 0, n50 ;
+      U64 sum = 0, psum = 0 ;
+      for (i = 0 ; i < 256 ; ++i)
+	{ sum += i*lengths[i] ;
+	  if (lengths[i] && !min) min = i ;
+	  if (lengths[i]) max = i ;
+	}
+      for (i = 0 ; i < 256 ; ++i) { psum += i*lengths[i] ; if (psum*2 < sum) n50 = i+1 ; }
+      double mean = sum/(double)nRecord ;
+      fprintf (fOut, "LENGTHS min %d max %d mean %.1f n50 %d\n", min, max, mean, n50) ;
+      for (i = 255 ; i >= 0 ; --i)
+	if (scores[i]) fprintf (fOut, "SCORES %4d %llu\n", i-128, scores[i]) ;
+      fprintf (fOut, "SCORE_MIN_MAX %d %d\n", minScore, maxScore) ;
+      fprintf (fOut, "EDITS") ;
+      for (i = 0 ; i <= maxEdit ; ++i) fprintf (fOut, " %llu", edits[i]) ;
+      fprintf (fOut, "\n") ;
+      double ct, ga, other ;
+      for (i = 0 ; i < 15 ; ++i)
+	{ ct = ga = other = 0. ;
+	  double nC = start[i][1][0] + start[i][1][1] + start[i][1][2] + start[i][1][3] ;
+	  if (nC) ct = start[i][1][3] / nC ;
+	  double nG = start[i][2][0] + start[i][2][1] + start[i][2][2] + start[i][2][3] ;
+	  if (nG) ga = start[i][2][0] / nG ;
+	  double nX = start[i][0][0] + start[i][0][1] + start[i][0][2] + start[i][0][3] +
+	    nC + nG + start[i][3][0] + start[i][3][1] + start[i][3][2] + start[i][3][3]
+	    - start[i][1][3] - start[i][2][0] ;
+	  if (nX) other = (nX-start[i][0][0]-start[i][1][1]-start[i][2][2]-start[i][3][3]) / nX ;
+	  fprintf (fOut, "START %2d C>T %.3f G>A %.3f OTHER %.3f\n", i+1, ct, ga, other) ;
+	}
+      { ct = ga = other = 0. ;
+	double nC = mid[1][0] + mid[1][1] + mid[1][2] + mid[1][3] ;
+	if (nC) ct = mid[1][3] / nC ;
+	double nG = mid[2][0] + mid[2][1] + mid[2][2] + mid[2][3] ;
+	if (nG) ga = mid[2][0] / nG ;
+	double nX = mid[0][0] + mid[0][1] + mid[0][2] + mid[0][3] +
+	  nC + nG + mid[3][0] + mid[3][1] + mid[3][2] + mid[3][3]
+	  - mid[1][3] - mid[2][0] ;
+	if (nX) other = (nX-mid[0][0]-mid[1][1]-mid[2][2]-mid[3][3]) / nX ;
+	fprintf (fOut, "MID      C>T %.3f G>A %.3f OTHER %.3f\n", ct, ga, other) ;
+      }
+      for (i = 0 ; i < 15 ; ++i)
+	{ ct = ga = other = 0. ;
+	  double nC = end[i][1][0] + end[i][1][1] + end[i][1][2] + end[i][1][3] ;
+	  if (nC) ct = end[i][1][3] / nC ;
+	  double nG = end[i][2][0] + end[i][2][1] + end[i][2][2] + end[i][2][3] ;
+	  if (nG) ga = end[i][2][0] / nG ;
+	  double nX = end[i][0][0] + end[i][0][1] + end[i][0][2] + end[i][0][3] +
+	    nC + nG + end[i][3][0] + end[i][3][1] + end[i][3][2] + end[i][3][3]
+	    - end[i][1][3] - end[i][2][0] ;
+	  if (nX) other = (nX-end[i][0][0]-end[i][1][1]-end[i][2][2]-end[i][3][3]) / nX ;
+	  fprintf (fOut, "END   %2d C>T %.3f G>A %.3f OTHER %.3f\n", i+1, ct, ga, other) ;
+	}
+      for (i = 0 ; i < 4 ; ++i)
+	for (j = 0 ; j < 4 ; ++j)
+	  { fprintf (fOut, " COUNTS %c>%c", index2char[i], index2char[j]) ;
+	    fprintf (fOut, " MID %llu START", mid[i][j]) ;
+	    for (k = 0 ; k < 15 ; ++k) fprintf (fOut, " %llu", start[k][i][j]) ;
+	    fprintf (fOut, " END") ;
+	    for (k = 15 ; k-- ; ) fprintf (fOut, " %llu", end[k][i][j]) ;
+	    fprintf (fOut, "\n") ;
+	  }
+    }
+  
+  if (fOut) fclose (fOut) ;
+  newFree (edits,256,U64) ;
+  newFree (scores,256,U64) ;
   return true ;
 }
 
