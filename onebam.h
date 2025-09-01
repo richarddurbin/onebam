@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 27 11:17 2025 (rd109)
+ * Last edited: Sep  1 01:09 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -20,9 +20,8 @@
 static char *schemaText =
   "1 3 def 1 0                  schema for onebam\n"
   ".\n"
-  "P 3 ref                      REFERENCE DATABASE\n"
-  "O A 2 3 INT 3 INT            accession: length, taxid\n"
-  "D I 1 6 STRING               accession identifier\n"
+  "P 6 acctax                   ACCESSION TO TAXID INFORMATION\n"
+  "O A 5 3 INT 3 INT 3 INT 3 INT 6 STRING  taxid start count shared_prefix_len new_suffix\n"
   ".\n"
   "P 3 seq                      SEQUENCE file - making filetype seq enables .1seq functionality\n"
   "S 4 read                     1read file\n"
@@ -65,6 +64,7 @@ bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxid
 
 // oneread.c
 bool merge1read (char *outfile, int nIn, char **infiles) ;
+bool report1read (char *readFileName, char *outFileName) ;
 
 // albcode.c
 void albReport (char *fileName, char *outFileName) ;
