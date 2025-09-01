@@ -20,8 +20,8 @@ clean:
 
 ### object files
 
-UTILS_OBJS = utils.o array.o hash.o merge.o
-UTILS_HEADERS = utils.h array.h hash.h merge.h
+UTILS_OBJS = utils.o array.o hash.o merge.o dict.o
+UTILS_HEADERS = utils.h array.h hash.h merge.h dict.h
 $(UTILS_OBJS): utils.h $(UTILS_HEADERS)
 
 HTS_DIR = $(PWD)/../htslib/.
