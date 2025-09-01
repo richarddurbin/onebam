@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 27 11:17 2025 (rd109)
+ * Last edited: Sep  1 01:30 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -20,8 +20,8 @@ static bool numberSeq (char* inName, char *out1seqName, char *outFqName, bool is
 
 // reference
 ExternalReference *reference = 0 ;
-static void  buildReference (char *refname, char *tsvname) ;
-static bool  readReference (char *refname) ;
+static bool makeAccTax (char *refname, char *tsvname) ;
+static bool readReference (char *refname) ;
 
 // extract stem from input filename
 char *derivedName (char *inName, char *tag)
@@ -46,9 +46,13 @@ static char usage[] =
   "  options and arguments depend on the command\n"
   "  commands with arguments, each followed by their options:\n"
   "    bam21read <taxid.tsv[.gz]> <XX.bam>  convert BAM/SAM/CRAM file to .1read\n"
-  "      -o <ZZ.1read>                    output file - default is XX.1read for XX.bam input\n"
-  "    merge1read [*.1read]+          merge .1read files\n"
+  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.bam\n"
+  "    merge1read [*.1read]+         merge .1read files\n"
   "      -o <ZZ.1read>                    output file - default is 'combined.1read'\n"
+  "    report1read <XX.1read>        report on contents of .1read file\n"
+  "      -o <ZZ.report>                   output to named file rather than stdout\n"
+  "    makeAccTax <XX.tsv>           convert acc2taxid tab-separated file to .1acctax\n"
+  "      -o <ZZ.1acctax>                  output file - default is XX.1acctax for input XX.*\n"
   "    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bam\n"
   "      -taxid <XX.tsv>                  file with lines <acc>\\ttaxid\\n sorted on acc\n"
@@ -98,8 +102,8 @@ int main (int argc, char *argv[])
 	else die ("unknown onebam bam21read option %s - run without args for usage", *argv) ;
       if (argc != 2)
 	die ("onebam bam21read needs 2 not %d args; run without args for usage", argc) ;
-      if (!bam21read (argv[1], outFileName, argv[0]))
-	die ("failed to merge .1read files") ;
+      if (!bam21read (argv[1], outFileName, *argv))
+	die ("failed to convert bam file %s to .1read file", *argv) ;
     }
   else if (!strcmp (command, "merge1read"))
     { while (argc && **argv == '-')
@@ -110,6 +114,26 @@ int main (int argc, char *argv[])
 	die ("onebam merge1read needs at least 2 not %d args; run without args for usage", argc) ;
       if (!merge1read (outFileName, argc, argv))
 	die ("failed to merge .1read files") ;
+    }
+  else if (!strcmp (command, "report1read"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam report1read option %s - run without args for usage", *argv) ;
+      if (argc < 1)
+	die ("onebam report1read needs one not %d args; run without args for usage", argc) ;
+      if (!report1read (outFileName, *argv))
+	die ("failed to generate report from file %s", *argv) ;
+    }
+  else if (!strcmp (command, "makeAccTax"))
+    { while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam makeAccTax option %s - run without args for usage", *argv) ;
+      if (argc < 1)
+	die ("onebam makeAccTax needs one not %d args; run without args for usage", argc) ;
+      if (!makeAccTax (outFileName, *argv))
+	die ("failed to make .1acctax file from %s", *argv) ;
     }
   else if (!strcmp (command, "bam21bam"))
     { while (argc && **argv == '-')
@@ -223,50 +247,135 @@ static bool numberSeq (char* inName, char *out1seqName, char *outFqName, bool is
 
 /*********************** reference package *****************************/
 
-static void accParse (char *acc, char *prefix, I64 *ip, int *digits, char *suffix)
-{
-  char *s = acc ;
-  while (*s && *s < '0' || *s > '9') *prefix++ = *s++ ; *prefix = 0 ;
-  *ip = 0 ; *digits = 0 ;
-  while (*s >= '0' && *s <= '9') { *ip *= 10 ; *ip += *s++ - '0' ; ++*digits ; }
-  while (*s) *suffix++ = *s++ ; *suffix = 0 ;
+#include "dict.h"
+
+typedef struct {
+  U64 start ;
+  U32 count, taxid ;
+} Block ;
+
+static int blockCompare (const void *a, const void *b)
+{ Block *ba = (Block*)a, *bb = (Block*)b ;
+  I64 diff = (I64)ba->start - (I64)bb->start ;
+  if (diff > 0) return 1 ; else if (diff < 1) return -1 ; else return 0 ;
 }
 
-static void buildReference (char *dbname, char *tsvname)
+static U64 accParse (char *acc) // truncates acc to its prefix before terminal digits
 {
-  printf ("building reference for %s %s\n", dbname, tsvname) ;
+  char *s = acc ; while (*s) ++s ; // go to end of acc
+  while (--s >= acc && *s >= '0' && *s <= '9') ; // go to last char before terminal digits (if any)
+  char *term = ++s ;
+  int n = 0 ; while (*s >= '0' && *s <= '9') n = n * 10 + (*s++ - '0') ;
+  *term = 0 ; // truncate
+  return n ;
+}
 
-  OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
-  OneFile   *of = oneFileOpenWriteNew (dbname, schema, "ref", true, 1) ;
-  if (!of) die ("failed to open reference database ONEfile %s", dbname) ;
-  FILE      *in = fzopen (tsvname,"r") ;
-  if (!in) die ("failed to open TSV file %s\n", tsvname) ;
+DICT *compareDict ;
+static int dictNameCompare (const void *a, const void *b)
+{ char *sa = dictName(compareDict, *(int*)a), *sb = dictName(compareDict, *(int*)b) ;
+  return strcmp (sa, sb) ;
+}
 
-  I64 nAcc = 0 ;
-  char  accBuf[32], aPref[32], aSuff[32], aPref0[32], aSuff0[255] ; accBuf[31] = 0 ;
-  I64 z, z0 = -2 ;
-  int d, d0 ;
+static bool makeAccTax (char *accTaxName, char *tsvName)
+{
+  if (!accTaxName) accTaxName = derivedName (tsvName, "1acctax") ;
+  printf ("making reference %s from %s\n", accTaxName, tsvName) ;
+
+  OneSchema *schema = oneSchemaCreateFromText (schemaText) ; // check can open output
+  OneFile *of = oneFileOpenWriteNew (accTaxName, schema, "acctax", true, 1) ;
+  if (!of) die ("failed to open reference database ONEfile %s", accTaxName) ;
+
+  FILE *in = fzopen (tsvName, "r") ;
+  if (!in) die ("failed to open acc2tax file %s\n", tsvName) ;
+
+  DICT  *pDict = dictCreate (1<<20) ;
+  Array  pArray = arrayCreate (1<<20, Array) ;
+  
+  I64  nAcc = 0 ;
+  I64  nRawBlock = 0 ;
+  char accBuf[64], accLast[64] ; accBuf[63] = 0 ; accLast[0] = 0 ;
+  U64  index, indexLast = 0 ;
+  U32  k, kLast = -1 ;
+  U32  tid, tidLast ;
   while (!feof (in))
-    { long long len, taxid ;
-      if (fscanf (in, "%31s\t%lld\t%lld\n", accBuf, &len, &taxid) != 3)
-	die ("failed to read line %lld", nAcc+1) ;
-      oneInt (of,0) = (I64) len ;
-      oneInt (of,1) = (I64) taxid ;
-      oneWriteLine (of, 'A', 0, 0) ;
-      accParse (accBuf, aPref, &z, &d, aSuff) ;
-      if (z != ++z0 || d != d0 || strcmp (aPref, aPref0) || strcmp (aSuff, aSuff0))
-	{ oneWriteLine (of, 'I', strlen(accBuf), accBuf) ;
-	  z0 = z ; d0 = d ; strcpy (aPref0, aPref) ; strcpy (aSuff0, aSuff) ;
+    { ++nAcc ;
+      int tid ;
+      if (fscanf (in, "%63s\t%*s\t%u\t%*s\n", accBuf, &tid) != 2)
+	die ("failed to read line %lld", nAcc) ;
+      int pLen ;
+      U64 index = accParse (accBuf) ;
+      Block *b = 0 ;
+      if (!strcmp (accBuf, accLast)) // same as previous - common so direct check is worth while
+	k = kLast ;
+      else
+	{ if (dictAdd (pDict, accBuf, &k)) // a new prefix
+	    { if (k != arrayMax(pArray)) die ("logic error in buildReference") ;
+	      Array ak = array(pArray, k, Array) = arrayCreate (4, Block) ;
+	      b = arrayp(ak,0,Block) ; // make a new block
+	      b->taxid = tid ;
+	      b->start = index ;
+	      b->count = 1 ;
+	      ++nRawBlock ;
+	    }
+	  strcpy (accLast, accBuf) ;
 	}
-      ++nAcc ;
+      if (!b) // i.e. same as previous or found in the dict
+	{ Array ak = arr(pArray, k ,Array) ;
+	  Block *b = arrp(ak,arrayMax(ak)-1,Block) ; // pointer to existing final block
+	  if (tid == b->taxid && index == b->start + b->count)
+	    ++b->count ; // extend block
+	  else
+	    { b = arrayp(ak,arrayMax(ak),Block) ; // make a new block
+	      b->taxid = tid ;
+	      b->start = index ;
+	      b->count = 1 ;
+	      ++nRawBlock ;
+	    }
+	}
+      kLast = k ;
+      //      if (!(nAcc % 1000000))
+      //        { printf ("record %d: ", (int) nAcc) ;
+      //	  printf ("%d prefixes %d raw blocks: ", dictMax(pDict), (int) nRawBlock) ;
+      //          printf ("prefix %s index %llu k %d\n", accBuf, (unsigned long long) index, k) ;
+      //        }
     }
   fclose (in) ;
-  oneFileClose (of) ;
-  fprintf (stderr, "read %lld accessions: ", (long long)nAcc) ;
-  timeUpdate (stderr) ;
-}
 
+  fprintf (stderr, "read %lld accessions for %d prefixes %lld raw blocks: ",
+	   (long long)nAcc, dictMax(pDict), (long long) nRawBlock) ;
+  timeUpdate (stderr) ;
+
+  int i, j ;
+  int *iDict = new(dictMax(pDict),int) ;
+  for (i = 0 ; i < dictMax(pDict) ; ++i) iDict[i] = i ;
+  compareDict = pDict ; qsort (iDict, dictMax(pDict), sizeof(int), dictNameCompare) ;
+  *accLast = 0 ;
+  for (i = 0 ; i < dictMax(pDict) ; ++i)
+    { int k = iDict[i] ;
+      int d = 0 ; char *s = dictName(pDict, k), *t = accLast ;
+      while (*s == *t) { ++s ; ++t ; ++d ; } // NB they can't be the same, so !(*s == *t == 0)
+      Array ak = arr(pArray,k,Array) ;
+      arraySort (ak, blockCompare) ;
+      // could compress here
+      Block *b = arrp(ak,0,Block) ;
+      oneInt(of,0) = b->taxid ; oneInt(of,1) = b->start ; oneInt(of,2) = b->count ;
+      oneInt(of,3) = d ;
+      oneWriteLine (of, 'A', strlen(s), s) ;
+      ++b ;
+      oneInt(of,3) = d + strlen(s) ;
+      strcpy (t, s) ; // update accLast to be full name
+      for (j = 1 ; j < arrayMax(ak) ; ++j, ++b)
+	{ oneInt(of,0) = b->taxid ; oneInt(of,1) = b->start ; oneInt(of,2) = b->count ;
+	  oneWriteLine (of, 'A', 0, "") ;
+	}
+    }
+
+  oneFileClose (of) ;
+  return true ;
+}
 /********** threaded code to read in the reference ************/
+
+// *** THIS CODE IS OUT OF DATE ***
 
 typedef struct {
   OneFile   *of ;
