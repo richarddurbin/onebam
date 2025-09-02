@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep  1 01:30 2025 (rd109)
+ * Last edited: Sep  2 12:58 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -248,6 +248,7 @@ static bool numberSeq (char* inName, char *out1seqName, char *outFqName, bool is
 /*********************** reference package *****************************/
 
 #include "dict.h"
+#include <ctype.h>
 
 typedef struct {
   U64 start ;
@@ -276,6 +277,62 @@ static int dictNameCompare (const void *a, const void *b)
   return strcmp (sa, sb) ;
 }
 
+// my own code to parse the acc2taxid file to deal with variants
+static bool readAccLine (FILE *in, long long nLine, char *accBuf, int *tid)
+{
+  char c, *s = accBuf ;
+  int n = 0 ;
+  *tid = 0 ;
+  while ((c = getc(in)) != EOF && !isspace(c))
+    { *s++ = c ;
+      if (++n == 64)
+	{ warn ("accession name is too long - line %lld", nLine) ;
+	  while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
+	}
+      *s = 0 ;
+    }
+  if (!strcmp (accBuf, "accession")) // ignore this line
+    { warn ("header line in acc2tax file line %lld", nLine) ;
+      while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
+    }
+  if (c != '\t') die ("missing TAB after 1st field - line %lld", nLine) ;
+  s = accBuf ;
+  while ((c = getc(in)) != EOF && !isspace(c) && *s)
+    if (c != *s++)
+      { warn ("mismatch of first two fields - line %lld", nLine) ;
+	while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
+      }
+  if (c != '.')
+    { warn ("2nd field is not versioned 1st field - line %lld", nLine) ;
+      while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
+    }
+  while ((c = getc(in)) != EOF && !isspace(c))
+    if (c < '0' || c > '9')
+      { warn ("version is not a number - line %lld", nLine) ;
+	while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
+      }
+  if (c != '\t')
+    { warn ("missing TAB after 2nd field - line %lld", nLine) ;
+      while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
+    }
+  while ((c = getc(in)) != EOF && !isspace(c))
+    if (c < '0' || c > '9')
+      { warn ("taxid is not a number - line %lld", nLine) ;
+	while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
+      }
+    else
+      *tid = *tid * 10 + (c - '0') ;
+  if (c != '\t' && c != '\n')
+    { warn ("missing TAB after taxid - line %lld", nLine) ;
+      while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
+    }
+  if (c != '\n')
+    { warn ("error %d - line %lld", ferror(in), nLine) ;
+      while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
+    }
+  return true ;
+}
+
 static bool makeAccTax (char *accTaxName, char *tsvName)
 {
   if (!accTaxName) accTaxName = derivedName (tsvName, "1acctax") ;
@@ -291,17 +348,15 @@ static bool makeAccTax (char *accTaxName, char *tsvName)
   DICT  *pDict = dictCreate (1<<20) ;
   Array  pArray = arrayCreate (1<<20, Array) ;
   
-  I64  nAcc = 0 ;
-  I64  nRawBlock = 0 ;
+  long long nLine = 0, nAcc = 0, nRawBlock = 0 ;
   char accBuf[64], accLast[64] ; accBuf[63] = 0 ; accLast[0] = 0 ;
   U64  index, indexLast = 0 ;
   U32  k, kLast = -1 ;
   U32  tid, tidLast ;
   while (!feof (in))
-    { ++nAcc ;
-      int tid ;
-      if (fscanf (in, "%63s\t%*s\t%u\t%*s\n", accBuf, &tid) != 2)
-	die ("failed to read line %lld", nAcc) ;
+    { int tid ;
+      if (!readAccLine (in, ++nLine, accBuf, &tid)) continue ;
+      ++nAcc ;
       int pLen ;
       U64 index = accParse (accBuf) ;
       Block *b = 0 ;
@@ -333,9 +388,9 @@ static bool makeAccTax (char *accTaxName, char *tsvName)
 	    }
 	}
       kLast = k ;
-      //      if (!(nAcc % 1000000))
-      //        { printf ("record %d: ", (int) nAcc) ;
-      //	  printf ("%d prefixes %d raw blocks: ", dictMax(pDict), (int) nRawBlock) ;
+      //      if (!(nLine % 1000000))
+      //        { printf ("record %lld: ", nLine) ;
+      //	  printf ("%d prefixes %lld raw blocks: ", dictMax(pDict), nRawBlock) ;
       //          printf ("prefix %s index %llu k %d\n", accBuf, (unsigned long long) index, k) ;
       //        }
     }
@@ -356,7 +411,7 @@ static bool makeAccTax (char *accTaxName, char *tsvName)
       while (*s == *t) { ++s ; ++t ; ++d ; } // NB they can't be the same, so !(*s == *t == 0)
       Array ak = arr(pArray,k,Array) ;
       arraySort (ak, blockCompare) ;
-      // could compress here
+      // should compress here - also remove duplicates at the same time
       Block *b = arrp(ak,0,Block) ;
       oneInt(of,0) = b->taxid ; oneInt(of,1) = b->start ; oneInt(of,2) = b->count ;
       oneInt(of,3) = d ;
