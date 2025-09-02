@@ -5,7 +5,7 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 31 23:39 2025 (rd109)
+ * Last edited: Sep  1 18:04 2025 (rd109)
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -184,7 +184,7 @@ bool merge1read (char *outfile, int nIn, char **infiles)
 
 /*********************************************************/
 
-bool report1read (char *readFileName, char *outFileName)
+bool report1read (char *outFileName, char *readFileName)
 {
   int i, j, k ;
   
@@ -234,15 +234,15 @@ bool report1read (char *readFileName, char *outFileName)
       char *m = oneString(of) ;
       int nEdit = 0 ;
       for (i = 0 ; i < seqLen ; ++i)
-	if (m[i] != '.') // an edit
-	  { ++nEdit ;
-	    int from = map[m[i]], to = map[seq[i]] ;
-	    if (from >= 0 && to >= 0)
-	      { if (i < 15) ++start[i][from][to] ;
-		else if (seqLen - 1 - i < 15) ++end[seqLen-1-i][from][to] ;
-		else ++mid[from][to] ;
-	      }
-	  }
+	{ int from, to = map[seq[i]] ;
+	  if (m[i] == '.') from = to ;
+	  else { from = map[m[i]] ; ++nEdit ; }
+	  if (from >= 0 && to >= 0)
+	    { if (i < 15) ++start[i][from][to] ;
+	      else if (seqLen - 1 - i < 15) ++end[seqLen-1-i][from][to] ;
+	      else ++mid[from][to] ;
+	    }
+	}
       ++edits[nEdit] ;
       if (nEdit > maxEdit) maxEdit = nEdit ;
 
