@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 27 11:19 2025 (rd109)
+ * Last edited: Sep  1 16:35 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -695,6 +695,9 @@ bool bam21read(char *bamFileName, char *outFileName, char *taxidFileName)
 	  ENSURE_BUF_SIZE(lastqName, lastqNameSize, bf->b->core.l_qname, char);
 	  char *p = lastqName, *q = qName;
 	  while (*p && *p == *q) { ++p; ++q; }
+	  if (*q < *p)
+	    die ("input bam file %s is not sorted on read name - record %lld %s < %s",
+		 bamFileName, (long long) nRecord, qName, lastqName) ;
 	  oneInt(of, 0) = (I64)(q - qName);
 	  oneWriteLine(of, 'J', strlen(q), q);
 	  strcpy(lastqName, qName);
