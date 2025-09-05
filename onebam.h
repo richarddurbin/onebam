@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep  1 01:09 2025 (rd109)
+ * Last edited: Sep  2 17:38 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -56,7 +56,7 @@ char *derivedName (char *inName, char *tag) ;
 // onebamhts.c
 void setCramReference (char *cramRef) ;
 void auxAdd (char *oneCode, char *spec) ;
-bool bam21read(char *bamFileName, char *outFileName, char *taxidFileName) ;
+bool bam21read(char *bamFileName, char *outFileName, char *accTaxName) ;
 bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool isNames) ;
 bool bamMake1read (char *bamOneFileName, char *outFileName) ;
 bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxidFileName,

@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep  1 16:35 2025 (rd109)
+ * Last edited: Sep  2 23:58 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -574,7 +574,28 @@ static void generateMline (char *mLine, int seqLen, I32 *cigar, char *md, bool i
     }
 }
 
-bool bam21read(char *bamFileName, char *outFileName, char *taxidFileName)
+static I64 accParse (char *acc) // truncates acc to its prefix before terminal digits
+{
+  char *s = acc ; while (*s) ++s ; // go to end of acc
+  while (--s >= acc && *s >= '0' && *s <= '9') ; // go to last char before terminal digits (if any)
+  if (s >= acc && *s == '.') *s = 0 ; // delete the version
+  while (--s >= acc && *s >= '0' && *s <= '9') ; // go to last char before terminal digits (if any)
+  char *term = ++s ;
+  int n = 0 ; while (*s >= '0' && *s <= '9') n = n * 10 + (*s++ - '0') ;
+  *term = 0 ; // truncate
+  return n ;
+}
+
+static char **accTaxName ;
+static I64   *accTaxN ;
+static int accTaxOrder (const void *a, const void *b)
+{ int retVal = strcmp(accTaxName[*(int*)a], accTaxName[*(int*)b]) ;
+  if (retVal) return retVal ;
+  else return accTaxN[*(int*)a] - accTaxN[*(int*)b] ;
+}
+
+
+bool bam21read(char *bamFileName, char *outFileName, char *accTaxFileName)
 {
   BamFile *bf = bamFileOpenRead(bamFileName);
   if (!bf) return false;
@@ -592,26 +613,49 @@ bool bam21read(char *bamFileName, char *outFileName, char *taxidFileName)
 
   // Deal with targets - sort them and load taxids
   int i, *revMap = new(nTargets, int);
-  for (i = 0; i < nTargets; ++i) revMap[i] = i;
-
-  NAMES = bf->h->target_name; qsort(revMap, nTargets, sizeof(int), accOrder);
-
-  int  *taxid = new0(nTargets+1, int);
-  FILE *tf = fzopen(taxidFileName, "r");
-  if (!tf) die("failed to open taxid file %s", taxidFileName);
-  char accBuf[32]; *accBuf = 0;
-  int  tid, nFound = 0, nT = 0, comp;
+  accTaxName = bf->h->target_name ;
+  accTaxN = new(nTargets, I64) ;
   for (i = 0; i < nTargets; ++i)
-    { char *acc = bf->h->target_name[revMap[i]];
-      while ((comp = strcmp(accBuf, acc)) < 0)
-	{ if (fscanf(tf, "%s\t%d\n", accBuf, &tid) != 2) break;
-	  ++nT;
-	}
-      if (!comp) { taxid[revMap[i]+1] = tid; ++nFound; }
+    { revMap[i] = i ;
+      accTaxN[i] = accParse (accTaxName[i]) ; // also truncates to stem as side effect
     }
-  fclose(tf);
-  newFree(revMap, nTargets, int);
-  printf("found %d taxids in %d txid2acc entries: ", nFound, nT); timeUpdate(stdout);
+  qsort(revMap, nTargets, sizeof(int), accTaxOrder);
+  printf ("sorted the targets\n") ;
+
+  int  *taxid = new0(nTargets+1, int) ;
+  OneFile *oa = oneFileOpenRead (accTaxFileName, schema, "acctax", 1) ;
+  if (!oa) die ("failed to open .1acctax file %s", accTaxFileName) ;
+  if (!oneGoto (oa, 'A', 1)) die ("no A lines in .1acctax file %s", accTaxFileName) ;
+  oneReadLine (oa) ; // must be the first A line
+  int tid    = oneInt(oa,0) ;
+  char accBuf[64] ; if (oneLen(oa) > 63) die ("acc root %s too long > 63", oneString(oa)) ;
+  strcpy (accBuf, oneString(oa)) ;
+  int  nFound = 0, nBlock = 0, nameComp ;
+  for (i = 0; i < nTargets; ++i)
+    { char *acc = accTaxName[revMap[i]] ;
+      I64   k   = accTaxN[revMap[i]] ;
+      while ((nameComp = strcmp(accBuf, acc)) < 0)
+	{ while (oneReadLine (oa) && !oneLen(oa)) { ; } // oneLen(oa) == 0 implies same string
+	  if (!oa->lineType) break ; // end of file
+	  strcpy (accBuf + oneInt(oa,3), oneString(oa)) ; // replace suffix
+	}
+      if (!nameComp) // a match
+	{ while (oneInt(oa,1) + oneInt(oa,2) - 1 < k)
+	    { if (!oneReadLine (oa)) { nameComp = 2 ; break ; } // use nameComp as flag
+	      if (oneLen(oa))
+		{ strcpy (accBuf + oneInt(oa,3), oneString(oa)) ; // replace suffix
+		  nameComp = 1 ;
+		  break ;
+		}
+	    }
+	  if (nameComp == 2) break ; // finish main i loop
+	  if (!nameComp && oneInt(oa,1) >= k) { taxid[revMap[i]+1] = tid ; ++nFound; }
+	}
+    }
+  oneFileClose (oa) ;
+  newFree(revMap, nTargets, int) ;
+  newFree(accTaxN, nTargets, I64) ;
+  printf("found %d taxids in %d acctax blocks: ", nFound, nBlock); timeUpdate(stdout) ;
 
   // Buffers for processing
   int lastqNameSize = 128;  char  *lastqName = new(lastqNameSize, char); *lastqName = 0;

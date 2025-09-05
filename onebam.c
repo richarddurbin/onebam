@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep  2 12:58 2025 (rd109)
+ * Last edited: Sep  2 18:36 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -45,8 +45,8 @@ static char usage[] =
   "Usage: onebam <command> <options>* <args>*\n"
   "  options and arguments depend on the command\n"
   "  commands with arguments, each followed by their options:\n"
-  "    bam21read <taxid.tsv[.gz]> <XX.bam>  convert BAM/SAM/CRAM file to .1read\n"
-  "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.bam\n"
+  "    bam21read <XX.1acctax> <YY.bam>  convert read-sorted BAM/SAM/CRAM file to .1read\n"
+  "      -o <ZZ.1read>                    output file - default is YY.1read for input YY.bam\n"
   "    merge1read [*.1read]+         merge .1read files\n"
   "      -o <ZZ.1read>                    output file - default is 'combined.1read'\n"
   "    report1read <XX.1read>        report on contents of .1read file\n"
