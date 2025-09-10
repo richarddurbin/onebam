@@ -5,7 +5,7 @@
  * Description: implementations of Gene Myers heap merging algorithms
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 10 17:12 2025 (rd109)
+ * Last edited: Sep 10 17:25 2025 (rd109)
  * Created: Sat Aug  9 18:05:50 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -132,7 +132,7 @@ static void heapifyString (Merge *m, int i, char *x, int t, int p) // collision 
   
   int    c = i ;
 
-  if (p == -1) p = lcp2 (m->S[m->H[i]],x,0) ; // the yieldString call did not pass the lcp
+  p = lcp2 (m->S[m->H[i]],x,p) ; // assumes that the value passed is <= true value - e.g. can be 0
   
   while ((l = 2*c) <= m->T) // we will break once we find where to place x
     { hl = m->H[l] ; pl = m->P[l] ;
@@ -351,7 +351,8 @@ int mergeNext (Merge *m, int **tList) // returns the number of entries in m->G, 
     { char *s ;
       // printf ("entering mergeNext string nG %d\n", m->nG) ;
       for (k = 0 ; k < m->nG ; ++k)
-	{ int p = -1 ;
+	{ int p = 0 ; // default is to start the comparison to previous at 0
+	              // user can set to the true LCP to save time (or indeed anything <= that)
 	  bool res = (m->yieldString)(m->HG[k], m->arg, &s, &p) ;
 	  // printf ("  yield k %d HG[k] %d G[k] %d s %s\n", k, m->HG[k], m->G[k], s) ;
 	  if (res)
