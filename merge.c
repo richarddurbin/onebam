@@ -5,7 +5,7 @@
  * Description: implementations of Gene Myers heap merging algorithms
  * Exported functions:
  * HISTORY:
- * Last edited: Aug 21 23:36 2025 (rd109)
+ * Last edited: Sep 10 17:12 2025 (rd109)
  * Created: Sat Aug  9 18:05:50 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -28,7 +28,7 @@ typedef struct {
   char  **S ;     // 1..T - Gene's string V
   int    *P ;     // 1..T - Gene's P: the LCP to the parent
 } Merge ;
-#define MERGE_DEFINED   // prevents typedef of Merge to void
+#define MERGE_DEFINED   // prevents typedef of Merge to void in merge.h
 
 #include "merge.h"
 
@@ -222,7 +222,7 @@ static void heapifyString (Merge *m, int i, char *x, int t, int p) // collision 
 	}
     }
   m->H[c] = t ; m->P[c] = p ; m->S[t] = x ;  // finally place x at c
-  //  printHeapString (m) ;
+  // printHeapString (m) ;
 } 
 
 /** next the code to collect the next set of samples */
@@ -331,7 +331,7 @@ void mergeDestroy (Merge *m)
 
 int mergeNext (Merge *m, int **tList) // returns the number of entries in m->G, 0 at finish
 {
-  static char LAST[2] = { 0xff, 0 } ;
+  static char LAST[2] = { 0x7f, 0 } ;
   int k ;
   if (m->V)
     { I32 x ;
@@ -474,6 +474,7 @@ int main (int argc, char *argv[])
   ListSet *ls = new0 (1, ListSet) ;
   int T = atoi(*argv++), N = atoi(*argv++) ;
   double lambda = atof(*argv++) ; if (lambda <= 0) die ("mean %f must be positive", lambda) ;
+
   ls->T   = T ;
   ls->n   = new (T, int) ;
   ls->i   = new0 (T, int) ; // initialise to 0
@@ -492,6 +493,7 @@ int main (int argc, char *argv[])
 	if (strcmp(ls->val[t][i],ls->val[t][n])) ls->val[t][++n] = ls->val[t][i] ;
       ls->n[t] = n+1 ;
     }
+  
   printf ("INPUTS\n") ;
   for (i = 0 ; i < N ; ++i)
     { for (t = 0 ; t < T ; ++t)
@@ -499,16 +501,21 @@ int main (int argc, char *argv[])
 	else printf ("           ") ;
       putchar ('\n') ;
     }
+  int sum = 0 ; for (t = 0 ; t < T ; ++t) sum += ls->n[t] ;
+  printf ("SUM_IN %d\n", sum) ;
 
   Merge *m = mergeCreateString (T, ls, yield) ;
   int n, *tList ;
   printf ("OUTPUT\n") ;
+  sum = 0 ;
   while ((n = mergeNext (m, &tList)))
     { int t = tList[0] ;
       printf (" output value %s count %d inputs", ls->val[t][ls->i[t]-1], n) ;
       int i ; for (i = 0 ; i < n ; ++i) printf (" %d", tList[i]) ;
       putchar ('\n') ;
+      sum += n ;
     }
+  printf ("SUM_OUT %d\n", sum) ;
 }
 
 #endif
