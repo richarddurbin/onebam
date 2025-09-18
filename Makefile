@@ -24,9 +24,15 @@ UTILS_OBJS = utils.o array.o hash.o merge.o dict.o
 UTILS_HEADERS = utils.h array.h hash.h merge.h dict.h
 $(UTILS_OBJS): utils.h $(UTILS_HEADERS)
 
+
 HTS_DIR = $(PWD)/../htslib/.
-HTS_OPTS = -I$(HTS_DIR)/htslib/
-HTS_LIBS = -L$(HTS_DIR) -Wl,-rpath $(HTS_DIR) -lhts -lm -lbz2 -llzma -lcurl -lz 
+ifeq ($(origin HTSSRC), undefined) # Previous behaviour
+  HTS_OPTS = -I$(HTS_DIR)/htslib/
+  HTS_LIBS = -L$(HTS_DIR) -Wl,-rpath $(HTS_DIR) -lhts -lm -lbz2 -llzma -lcurl -lz 
+else # htslib from another location
+  HTS_OPTS = -I$(HTSSRC)/include/htslib
+  HTS_LIBS = -L$(HTSSRC)/lib -Wl,-rpath $(HTSSRC)/lib -lhts -lm -lbz2 -llzma -lcurl -lz
+endif
 
 SEQIO_OPTS = -DONEIO -DBAMIO $(HTS_OPTS)
 #SEQIO_LIBS = -lm -lz
