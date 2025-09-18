@@ -283,6 +283,15 @@ static bool readAccLine (FILE *in, long long nLine, char *accBuf, int *tid)
   char c, *s = accBuf ;
   int n = 0 ;
   *tid = 0 ;
+  // Skip blank lines and leading whitespace
+  do {
+    c = getc(in);
+    if (c == EOF) return false;
+  } while (isspace(c) && c != '\n');
+  if (c == '\n') return false; // blank line
+  // Start parsing the accession
+  *s++ = c;
+  n = 1;
   while ((c = getc(in)) != EOF && !isspace(c))
     { *s++ = c ;
       if (++n == 64)
