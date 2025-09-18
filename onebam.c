@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep  2 18:36 2025 (rd109)
+ * Last edited: Sep 18 19:10 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -283,6 +283,15 @@ static bool readAccLine (FILE *in, long long nLine, char *accBuf, int *tid)
   char c, *s = accBuf ;
   int n = 0 ;
   *tid = 0 ;
+  if ((c = getc(in)) != EOF && isspace(c))
+    { while (isspace(c))
+	{ if (c == '\n') { warn ("empty line %lld", nLine) ; return false ; }
+	  if ((c = getc(in)) == EOF)
+	    { warn ("whitespace on empty final line %lld", nLine) ; return false ; }
+	}
+      warn ("initial whitespace on line %lld", nLine) ;
+    }
+  ungetc (c, in) ; // put the initial character back on the stack
   while ((c = getc(in)) != EOF && !isspace(c))
     { *s++ = c ;
       if (++n == 64)
@@ -291,6 +300,7 @@ static bool readAccLine (FILE *in, long long nLine, char *accBuf, int *tid)
 	}
       *s = 0 ;
     }
+  if (feof (in)) return false ;
   if (!strcmp (accBuf, "accession")) // ignore this line
     { warn ("header line in acc2tax file line %lld", nLine) ;
       while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
