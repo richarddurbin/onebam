@@ -283,15 +283,18 @@ static bool readAccLine (FILE *in, long long nLine, char *accBuf, int *tid)
   char c, *s = accBuf ;
   int n = 0 ;
   *tid = 0 ;
-  // Skip blank lines and leading whitespace
-  do {
-    c = getc(in);
-    if (c == EOF) return false;
-  } while (isspace(c) && c != '\n');
-  if (c == '\n') return false; // blank line
+  while (true)
+    { c = getc(in) ;
+      if (c == EOF) return false ;
+      if (!isspace(c) || c == '\n') break ;
+    }
+  if (c == '\n')
+    { warn ("blank line  - line %lld", nLine) ;
+     return false ; // blank line
+    } 
   // Start parsing the accession
-  *s++ = c;
-  n = 1;
+  *s++ = c ;
+  n = 1 ;
   while ((c = getc(in)) != EOF && !isspace(c))
     { *s++ = c ;
       if (++n == 64)
@@ -331,11 +334,11 @@ static bool readAccLine (FILE *in, long long nLine, char *accBuf, int *tid)
       }
     else
       *tid = *tid * 10 + (c - '0') ;
-  if (c != '\t' && c != '\n')
+  if (c != '\t' && c != '\n' && c!= EOF)
     { warn ("missing TAB after taxid - line %lld", nLine) ;
       while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
     }
-  if (c != '\n')
+  if (c != '\n' && c != EOF)
     { warn ("error %d - line %lld", ferror(in), nLine) ;
       while ((c = getc(in)) != EOF && c != '\n') { ; } return false ;
     }
