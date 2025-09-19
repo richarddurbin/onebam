@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep  2 23:58 2025 (rd109)
+ * Last edited: Sep 19 10:56 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -574,26 +574,26 @@ static void generateMline (char *mLine, int seqLen, I32 *cigar, char *md, bool i
     }
 }
 
-static I64 accParse (char *acc) // truncates acc to its prefix before terminal digits
+static I32 accParse (char *acc) // truncates acc to its prefix before terminal digits
 {
   char *s = acc ; while (*s) ++s ; // go to end of acc
   while (--s >= acc && *s >= '0' && *s <= '9') ; // go to last char before terminal digits (if any)
   if (s >= acc && *s == '.') *s = 0 ; // delete the version
   while (--s >= acc && *s >= '0' && *s <= '9') ; // go to last char before terminal digits (if any)
   char *term = ++s ;
-  int n = 0 ; while (*s >= '0' && *s <= '9') n = n * 10 + (*s++ - '0') ;
+  U64 n = 0 ; while (*s >= '0' && *s <= '9') n = n * 10 + (*s++ - '0') ;
+  if (n > I32MAX) die ("n %lld too big in accParse", (long long) n) ;
   *term = 0 ; // truncate
-  return n ;
+  return (I32) n ;
 }
 
 static char **accTaxName ;
-static I64   *accTaxN ;
+static I32   *accTaxN ;
 static int accTaxOrder (const void *a, const void *b)
 { int retVal = strcmp(accTaxName[*(int*)a], accTaxName[*(int*)b]) ;
   if (retVal) return retVal ;
   else return accTaxN[*(int*)a] - accTaxN[*(int*)b] ;
 }
-
 
 bool bam21read(char *bamFileName, char *outFileName, char *accTaxFileName)
 {
@@ -614,7 +614,7 @@ bool bam21read(char *bamFileName, char *outFileName, char *accTaxFileName)
   // Deal with targets - sort them and load taxids
   int i, *revMap = new(nTargets, int);
   accTaxName = bf->h->target_name ;
-  accTaxN = new(nTargets, I64) ;
+  accTaxN = new(nTargets, I32) ;
   for (i = 0; i < nTargets; ++i)
     { revMap[i] = i ;
       accTaxN[i] = accParse (accTaxName[i]) ; // also truncates to stem as side effect
@@ -633,7 +633,7 @@ bool bam21read(char *bamFileName, char *outFileName, char *accTaxFileName)
   int  nFound = 0, nBlock = 0, nameComp ;
   for (i = 0; i < nTargets; ++i)
     { char *acc = accTaxName[revMap[i]] ;
-      I64   k   = accTaxN[revMap[i]] ;
+      I32   k   = accTaxN[revMap[i]] ;
       while ((nameComp = strcmp(accBuf, acc)) < 0)
 	{ while (oneReadLine (oa) && !oneLen(oa)) { ; } // oneLen(oa) == 0 implies same string
 	  if (!oa->lineType) break ; // end of file
@@ -654,7 +654,7 @@ bool bam21read(char *bamFileName, char *outFileName, char *accTaxFileName)
     }
   oneFileClose (oa) ;
   newFree(revMap, nTargets, int) ;
-  newFree(accTaxN, nTargets, I64) ;
+  newFree(accTaxN, nTargets, I32) ;
   printf("found %d taxids in %d acctax blocks: ", nFound, nBlock); timeUpdate(stdout) ;
 
   // Buffers for processing
@@ -844,297 +844,6 @@ bool bam21read(char *bamFileName, char *outFileName, char *accTaxFileName)
   bamFileClose(bf);
   
   return true;
-}
-
-/*********************** binary files ***************************/
-
-// base this on bam21bam() and make1read()
-
-static U8 uu0[] = { 0, 0,  1, 0,   2, 0, 0, 0,   3, 0, 0, 0, 0, 0, 0, 0 } ;
-static U8 uu1[] = { 0, 0,  4, 0,   8, 0, 0, 0,  12, 0, 0, 0, 0, 0, 0, 0 } ;
-static U8 uu2[] = { 0, 0, 16, 0,  32, 0, 0, 0,  48, 0, 0, 0, 0, 0, 0, 0 } ;
-static U8 uu3[] = { 0, 0, 64, 0, 128, 0, 0, 0, 192, 0, 0, 0, 0, 0, 0, 0 } ;
-
-#define REPORT_ALB \
-  memset (edits, 0, 2*maxEdit) ; \
-  U8 nE = 0 ; /* number of edits */ \
-  char *md = mdBuf ; \
-  /* printf ("md %s\n", md) ; */ \
-  int iS = 0, nR = 0, nM = strlen(mdBuf) ; /* position in sequence, reference */  \
-  while (nM && (*md >= '0' && *md <= '9')) { nR = nR*10 + (*md++ - '0'); --nM; } \
-  /* printf ("  nM %d nR %d *md %c nE %d\n", nM, nR, *md, nE) ; */ \
-  U32 *cigar = cBuf ; \
-  while (nCigar) \
-    { int nS = bam_cigar_oplen(*cigar), op = bam_cigar_op(*cigar++) ; --nCigar ; \
-      /* printf ("  iS %d [CIGAR nS %d op %c]\n", iS, nS, bam_cigar_opchr(op)) ; */  \
-      switch (bam_cigar_type(op)) \
-	{ \
-	case 0: break ; /* do nothing */ \
-	case 1: iS += nS ; break ; /* INSERT (or SOFT_CLIP) */ \
-	case 2: /* DELETE (or REF_SKIP) */ 				\
-	  if (nR) die ("bad md match %d at delete record %d", nR, (int) nRecord) ; \
-	  if (*md != '^') die ("bad delete match %c at record %d", *md, (int) nRecord) ; \
-	  ++md ; --nM ; /* eat the ^ character */ 			\
-	  if (nM < nS) die ("%d < %d delete chars at record %d", nM, nS, (int) nRecord) ; \
-	  md += nS ; nM -= nS ; /* eat the deleted chars */ 		\
-	  while (nM && (*md >= '0' && *md <= '9')) \
-	    { nR = nR*10 + (*md++ - '0') ; --nM ; } \
-	  /* printf ("  nM %d nR %d *md %c nE %d\n", nM, nR, *md, nE) ; */  \
-	  break ; \
-	case 3: /* MATCH (or EQUAL or DIFF) */ \
-	  while (nS) \
-	    { if (nS <= nR) \
-		{ nR -= nS ; iS += nS ; nS = 0 ; } \
-	      else \
-		{ nS -= nR ; iS += nR ; nR = 0 ; \
-		  if (nE < 2*maxEdit) /* encode the edit */  \
-		    { if (isMaxReverse && (seqLen - iS < 256)) \
-			{ edits[nE++] = seqLen - iS ; /* edits position is 1-based */ \
-			  edits[nE++] = (seq[seqLen-1-iS] << 4) | \
-			    binaryAmbigComplement[dna2binaryAmbigConv[*md]] ; \
-			} \
-		      else if (iS + 1 < 256) \
-			{ edits[nE++] = iS + 1 ; /* edits position is 1-based */  \
-			  edits[nE++] = (seq[iS] << 4) | dna2binaryAmbigConv[*md] ; \
-			} \
-		    } \
-		  ++iS ; --nS ; ++md ; --nM ; /* do this even if can't register edit */ \
-		  while (nM && (*md >= '0' && *md <= '9')) \
-		    { nR = nR*10 + (*md++ - '0') ; --nM ; } \
-		  /* printf ("  nM %d nR %d *md %c nE %d\n", nM, nR, *md, nE) ; */  \
-		} \
-	    } \
-	  break ; \
-	} \
-    } \
-  if (iS != seqLen) die ("iS %d != seqLen %d", iS, seqLen) ; \
- \
-  /* pack first 16 bp and last 16 bp into last 8 bytes of edits[] */ \
-  U8 *u = edits + 2*maxEdit + 4 ; \
-  if (seqLen > 16) \
-    { u[0] = uu0[seq[0]] | uu1[seq[1]] | uu2[seq[2]] | uu3[seq[3]] ; \
-      u[1] = uu0[seq[4]] | uu1[seq[5]] | uu2[seq[6]] | uu3[seq[7]] ; \
-      u[2] = uu0[seq[8]] | uu1[seq[9]] | uu2[seq[10]] | uu3[seq[11]] ; \
-      u[3] = uu0[seq[12]] | uu1[seq[13]] | uu2[seq[14]] | uu3[seq[15]] ; \
-      char *eseq = seq + seqLen ; \
-      u[0] = uu0[eseq[-1]] | uu1[eseq[-2]] | uu2[eseq[-3]] | uu3[eseq[-4]] ; \
-      u[1] = uu0[eseq[-5]] | uu1[eseq[-6]] | uu2[eseq[-7]] | uu3[eseq[-8]] ; \
-      u[2] = uu0[eseq[-9]] | uu1[eseq[-10]] | uu2[eseq[-11]] | uu3[eseq[-12]] ; \
-      u[3] = uu0[eseq[-13]] | uu1[eseq[-14]] | uu2[eseq[-15]] | uu3[eseq[-16]] ; \
-    } \
-  else \
-    *(U64*)u = 0 ; \
-\
-  /* now write */ \
-  nameBuf[maxChars] = (char)((seqLen > 255) ? 255 : seqLen) ; \
-  size_t ret = fwrite (nameBuf, maxChars+1, 1, fAlb) ; \
-  if (ret != 1) die ("failed name write to .alb - ret %d ferror %d", ret, ferror(fAlb)) ; \
-  ret = fwrite (edits, 2*maxEdit+12, 1, fAlb) ;	\
-  if (ret != 1) die ("failed data write to .alb - ret %d ferror %d", ret, ferror(fAlb))
-
-void reportTxb (FILE *fTxb, char *nameBuf, int maxChars, Array aTx)
-{ if (arrayMax(aTx))
-    { if (fwrite (nameBuf, maxChars, 1, fTxb) != 1) die ("failed name write to .txb") ;
-      I32 n = arrayMax(aTx) ;
-      if (fwrite (&n, sizeof(I32), 1, fTxb) != 1) die ("failed n write to .txb") ;
-      arraySort (aTx, txCompare) ;
-      if (fwrite (arrp(aTx,0,TaxInfo), sizeof(TaxInfo), n, fTxb) != n)
-	die ("failed data write to .txb - ferror %d", ferror (fTxb)) ;
-    }
-}
-
-bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxidFileName,
-	      int maxEdit, int prefixLen, int maxChars)
-{
-  FILE *fTxb, *fAlb ;
-  if (!outTxbName) outTxbName = derivedName (bamFileName, "txb") ;
-  if (!(fTxb = fopen (outTxbName, "wb")))
-    { warn ("failed to open %s to write", outTxbName) ; return false ; }
-  if (!outAlbName) outAlbName = derivedName (bamFileName, "alb") ;
-  if (!(fAlb = fopen (outAlbName, "wb")))
-    { warn ("failed to open %s to write", outAlbName) ; fclose (fTxb) ; return false ; }
-  
-  BamFile *bf = bamFileOpenRead (bamFileName) ;
-  if (!bf) { fclose (fTxb) ; fclose (fAlb) ; return false ; }
-  int nTargets = bf->h->n_targets ;
-  printf ("opened %s and read %d target names: ", bamFileName, nTargets) ; timeUpdate (stdout) ;
-  
-  // deal with the targets - first sort them, allowing for tid 0 = * (no target)
-  int i, *revMap = new(nTargets,int) ;
-  for (i = 0 ; i < nTargets ; ++i) revMap[i] = i ;
-  
-  NAMES = bf->h->target_name ; qsort (revMap, nTargets, sizeof(int), accOrder) ;
-
-  printf ("sorted the targets: ") ; timeUpdate (stdout) ;
-  // next merge the targets to the taxid file to identify the taxids
-  int *taxid = new0(nTargets+1,int) ;
-  FILE *tf = fzopen (taxidFileName, "r") ;
-  if (!tf) die ("failed to open taxid file %s", taxidFileName) ;
-  char accBuf[32] ; *accBuf = 0 ;
-  int  txid, nFound = 0, nT = 0, comp ;
-  for (i = 0 ; i < nTargets ; ++i)
-    { char *acc = bf->h->target_name[revMap[i]] ;
-      while ((comp = strcmp (accBuf, acc)) < 0)
-	{ if (fscanf (tf, "%s\t%d\n", accBuf, &txid) != 2) break ;
-	  ++nT ;
-	}
-      if (!comp) { taxid[revMap[i]+1] = txid ; ++nFound ; }
-    }
-  fclose (tf) ;
-  newFree (revMap, nTargets, int) ;
-  printf ("found %d taxids from %d refs (missing %d): ", nFound, nT, nTargets-nFound) ; timeUpdate (stdout) ;
-
-  int    lastqNameSize = prefixLen + maxChars + 1 ;
-  char  *lastqName     = new (lastqNameSize,char) ; *lastqName = 0 ;
-  int    seqBufSize    = 1024 ;  char *seq   = new (seqBufSize,char) ;
-  int    nCigar        = 0 ;
-  int    cBufSize      = 1024 ;  U32  *cBuf  = new (cBufSize,U32) ;
-  int    mdBufSize     = 1024 ;  char *mdBuf = new (mdBufSize,char) ;
-  bool   isMaxReverse  = false ;
-  char   RC[128] ; { char  *s = ".-acgtnACGTN", *t = ".-tgcanTGCAN" ; while (*s) RC[*s++] = *t++ ; }
-  Hash   hTx           = hashCreate (8192) ;
-  Array  aTx           = arrayCreate (2048, TaxInfo) ;
-  char  *nameBuf       = new (maxChars+1, char) ;
-  U8    *edits         = new (2*maxEdit+12, U8) ; // add score (I32) then 8 bytes packed sequence
-  I32   *maxScore      = (I32*)(edits + 2*maxEdit) ; *maxScore = -(1<<30) ;
-  // sticking maxScore at the end of edits removes an fwrite() call
-  U64    seqLen ;
-  int    maxCharsTxb   = maxChars ;
-  bool   isFirst       = true ;
-  
-  
-  I64 nRecord = 0, nTxb = 0, nAlb = 0, nHits = 0 ;
-  TaxInfo *tx ;
-  while (true) // main loop to read sequences
-    { int res = sam_read1 (bf->f, bf->h, bf->b) ;
-      if (res < -1) die ("bamProcess failed to read bam record %lld", (long long)++nRecord) ;
-      if (res == -1) break ; // end of file
-      ++nRecord ;
-
-      // get the flags now - we will need it for various things
-      I64 flags = bf->b->core.flag ; 
-
-      char *qName = bam_get_qname(bf->b) ;
-      if (!qName) die ("query name is empty line %lld", (long long)nRecord) ;
-
-      if (isFirst) // write the .alb, .txb header lines, starting with 0 to sort first
-	{ if (strlen (qName) < prefixLen)
-	    die ("qName %s is shorter than expected prefix len %d", qName, prefixLen) ;
-	  // first .alb header
-	  fputc (0, fAlb) ; fputc ((U8)prefixLen, fAlb) ;
-	  fputc ((U8)maxChars, fAlb) ; fputc((U8)maxEdit, fAlb) ;
-	  int pLen = prefixLen, recordSpace = maxChars + 2*maxEdit + 13 - 4 ; // length - 4 fputc
-	  if (pLen > recordSpace)
-	    { pLen = recordSpace ;
-	      warn ("prefixLen %d is longer than header space %d - full prefix not stored",
-		    prefixLen, recordSpace) ;
-	    }
-	  if (fwrite (qName, pLen, 1, fAlb) != 1)
-	    die ("failed to write .alb header record length %d", pLen) ;
-	  recordSpace -= pLen ; while (recordSpace--) fputc (0, fAlb) ; // pad out rest of record
-	  // now write .txb header
-	  // first ensure that maxChars is large enough to store the whole prefix in the header
-	  if (maxCharsTxb < prefixLen - 1) maxCharsTxb = prefixLen - 1 ;
-	  fputc (0, fTxb) ; fputc ((U8)prefixLen, fTxb) ; fputc ((U8)maxCharsTxb, fTxb) ;
-	  if (fwrite (qName, prefixLen, 1, fTxb) != 1) die ("failed to write .txb header record") ;
-	  recordSpace = maxCharsTxb + sizeof(I32) - 3 - prefixLen ;
-	  while (recordSpace--) fputc (0, fTxb) ; // pad out rest of record
-	  isFirst = false ;
-	}
-      
-      if (strcmp (lastqName, qName)) // new query sequence
-	{ memset (nameBuf, 0, maxCharsTxb+1) ; // maxCharsTxb >= maxChars
-	  if (strlen(lastqName) > prefixLen) strncpy (nameBuf, lastqName+prefixLen, maxChars) ;
-	  if (*maxScore > -(1<<30))  // report it - NB it will not be on the first record
-	    { REPORT_ALB ;
-	      ++nAlb ;
-	      *maxScore = -(1<<30) ;
-	    }
-	  if (arrayMax(aTx))
-	    { reportTxb (fTxb, nameBuf, maxCharsTxb, aTx) ;
-	      ++nTxb ; 
-	      nHits += arrayMax(aTx) ;
-	      hashClear (hTx) ; arrayMax (aTx) = 0 ;
-	    }
-								
-	  ENSURE_BUF_SIZE (lastqName, lastqNameSize, 1+bf->b->core.l_qname, char) ;
-	  strcpy (lastqName, qName) ;
-	  // get the new sequence, reverse-complementing it if necesssary
-
-	  seqLen = bf->b->core.l_qseq ;
-	  ENSURE_BUF_SIZE (seq, seqBufSize, seqLen+1, char) ;
-	  char *s = seq, *bseq = (char*) bam_get_seq (bf->b) ;
-	  if (flags & BAM_FREVERSE)
-	    for (i = seqLen ; i-- ; )
-	      *s++ = binaryAmbigComplement[(int)bam_seqi(bseq,i)] ;
-	  else
-	    for (i = 0 ; i < seqLen ; ++i)
-	      *s++ = bam_seqi(bseq,i) ;
-	} // end of new query sequence block
-
-      // first get the taxid, and find it in or add it to the tx hash
-      txid = taxid[bf->b->core.tid+1] ; // is the +1 correct here?
-      if (hashAdd (hTx, hashInt(txid), &i))
-	{ tx = arrayp(aTx,i,TaxInfo) ;
-	  tx->txid = txid ; tx->count = 0 ; tx->bestScore = -(1<<14) ;
-	}
-      else
-	tx = arrp(aTx,i,TaxInfo) ;
-      ++tx->count ;
-      
-      // next get the score
-      U8 *aux ;
-      if (!(aux = bam_aux_get (bf->b, "AS"))) die ("no AS score in record %lld",(long long)nRecord) ;
-      int score = bam_aux2i (aux) ;
-      if (score > tx->bestScore) tx->bestScore = score ;
-      if (score > *maxScore)
-	{ *maxScore = score ;
-	  isMaxReverse = (flags & BAM_FREVERSE) ? true : false ;
-	  // need to record the cigar and MD lines
-	  nCigar = bf->b->core.n_cigar ;
-	  ENSURE_BUF_SIZE (cBuf, cBufSize, nCigar, U32) ;
-	  memcpy (cBuf, bam_get_cigar(bf->b), nCigar*sizeof(U32)) ;
-	  char *s ;
-	  if (!(aux = bam_aux_get (bf->b, "MD")) || !(s = bam_aux2Z (aux)))
-	    die ("failed to get MD string in record %lld", (long long)nRecord) ;
-	  ENSURE_BUF_SIZE (mdBuf, mdBufSize, 1+strlen(s), char) ;
-	  strcpy (mdBuf, s) ;
-	}
-    }
-
-  // report the final entry
-  if (*maxScore > -(1<<30))  // report it - NB it will not be on the first record
-    { REPORT_ALB ;
-      ++nAlb ;
-    }
-  if (arrayMax(aTx))
-    { reportTxb (fTxb, nameBuf, maxChars, aTx) ;
-      ++nTxb ;
-      nHits += arrayMax(aTx) ;
-    }
-  
-  printf ("processed %lld BAM records into\n", (long long) nRecord) ;
-
-  printf ("  %lld .alb (edit info) records of size %d (name) + %d (data) = %d bytes, total %lld bytes including header\n",
-	  (long long) nAlb, maxChars, 2*maxEdit + 13, maxChars + 2*maxEdit + 13,
-	  (long long) ((nAlb+1) * (maxChars + 2*maxEdit + 13))) ;
-  printf ("  %lld .txb (taxid info) records of size %d (name) + 4 = %d bytes, plus %lld hits of size %d bytes, total %lld bytes (including header)\n",
-	  (long long) nTxb, maxCharsTxb, maxCharsTxb + (int)sizeof(I32),
-	  (long long) nHits, (int)sizeof(TaxInfo),
-	  (long long) ((nTxb+1) * (maxCharsTxb + sizeof(I32)) + nHits * sizeof(TaxInfo))) ;
-  timeUpdate (stdout) ;
-  
-  bamFileClose (bf) ;
-  fclose (fTxb) ; fclose (fAlb) ;
-  newFree (taxid, nTargets, int) ;
-  newFree (lastqName, lastqNameSize, char) ;
-  newFree (seq, seqBufSize, char) ;
-  newFree (cBuf, cBufSize, U32) ;
-  newFree (mdBuf, mdBufSize, char) ;
-  newFree (nameBuf, maxChars, char) ;
-  newFree (edits, 2*maxEdit+4, U8) ;
-  hashDestroy (hTx) ; arrayDestroy (aTx) ;
-  return true ;
 }
 
 /*********************** end of file ***********************/
