@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 18 19:10 2025 (rd109)
+ * Last edited: Sep 19 11:01 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -67,14 +67,6 @@ static char usage[] =
 #ifndef HIDE
   "    1bam2bam <XX.1bam>            back-convert .1bam to .bam\n"
   "      -o <ZZ.bam>                      output file - default is XX.bam for input XX.1bam\n"
-  "    makebin <taxid.tsv> <XX.bam>  make fixed-width .alb and .txb binary files from bam file\n"
-  "      -oTxb <ZZ.txb>                   binary taxid output file - default XX.txb from XX.bam\n"
-  "      -oAlb <ZZ.alb>                   binary alignment output file - default XX.alb from XX.bam\n"
-  "      -prefixLen <n>                   ignore first n characters in names [0]\n"
-  "      -maxChars <n>                    write the next n chars of the name, or all if fewer [48]\n"
-  "      -maxEdit <n>                     maximum number of edits for read to be in .alb file [8]\n"
-  "    albReport <XX.alb>            report edit (damage) distribution etc. from .alb file\n"
-  "      -o <filename>                    write the report to filenam - default is stdout\n"
   "    numberSeq <XX.fq[.gz]>        make .1seq file from fq, plus new fq file with ints for names\n"
   "         NB will read and process fasta[.gz] or BAM/CRAM or even 1seq, as well as fastq[.gz]\n"
   "      -oSeq <ZZ.1seq>                  .1seq output file - default is XX.1seq for input XX.fq\n"
@@ -175,35 +167,6 @@ int main (int argc, char *argv[])
       if (argc != 1) die ("onebam numberSeq needs 1 not %d args; run without args for usage", argc) ;
       if (!numberSeq (*argv, outFileName, outFqName, isNames))
 	die ("failed to convert sequence file to .1seq and numbered .fq.gz files") ;
-    }
-  else if (!strcmp (command, "makebin"))
-    { int   maxEdit = 8 ;
-      int   prefixLen = 0 ;
-      int   maxChars = 48 ;
-      char *outAlbName = 0 ;
-      while (argc && **argv == '-')
-	if (!strcmp (*argv, "-oTxb") && argc > 1)
-	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else if (!strcmp (*argv, "-oAlb") && argc > 1)
-	  { outAlbName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else if (!strcmp (*argv, "-prefixLen") && argc > 1)
-	  { prefixLen = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
-	else if (!strcmp (*argv, "-maxChars") && argc > 1)
-	  { maxChars = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
-	else if (!strcmp (*argv, "-maxEdit") && argc > 1)
-	  { maxEdit = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
-	else die ("unknown onebam makebin option %s - run without args for usage", *argv) ;
-      if (argc != 2) die ("onebam makebin needs 2 not %d args; run without args for usage", argc) ;
-      if (!makeBin (argv[1], outFileName, outAlbName, argv[0], maxEdit, prefixLen, maxChars))
-	die ("failed to make binary file from bam file") ;
-    }
-  else if (!strcmp (command, "albReport"))
-    { while (argc && **argv == '-')
-	if (!strcmp (*argv, "-o") && argc > 1)
-	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else die ("unknown onebam albReport option %s - run without args for usage", *argv) ;
-      if (argc != 1) die ("onebam albReport needs 1 not %d args; run without args for usage",argc) ;
-      albReport (*argv, outFileName) ;
     }
   else
     die ("unknown onebam command %s - run without arguments for usage", command) ;
