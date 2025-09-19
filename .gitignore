@@ -35,6 +35,10 @@
 *.i*86
 *.x86_64
 *.hex
+onebam
+ONEview
+ONEstat
+seqstat
 
 # Debug files
 *.dSYM/
