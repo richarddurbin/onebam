@@ -5,7 +5,7 @@ CFLAGS = -O3
 
 LIBS = -lpthread
 
-ALL = onebam ONEview ONEstat seqstat albview txbview
+ALL = onebam ONEview ONEstat seqstat
 
 DESTDIR = ~/bin
 
@@ -40,15 +40,12 @@ onebamhts.o: onebamhts.c onebam.h
 oneread.o: oneread.c onebam.h merge.h
 	$(CC) $(CFLAGS) $(HTS_OPTS) -c $^
 
-albcode.o: albcode.c onebam.h
-	$(CC) $(CFLAGS) $(HTS_OPTS) -c $^
-
 seqio.o: seqio.c seqio.h
 	$(CC) $(CFLAGS) $(SEQIO_OPTS) -c $^
 
 ### programs
 
-onebam: onebam.c onebamhts.o oneread.o seqio.o albcode.o ONElib.o $(UTILS_OBJS)
+onebam: onebam.c onebamhts.o oneread.o seqio.o ONElib.o $(UTILS_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(SEQIO_LIBS) $(HTS_LIBS) $(LIBS)
 
 ONEview: ONEview.c ONElib.o
@@ -59,12 +56,6 @@ ONEstat: ONEstat.c ONElib.o
 
 seqstat: seqstat.c seqio.o ONElib.o $(UTILS_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(SEQIO_LIBS) $(HTS_LIBS) $(LIBS)
-
-albview: albview.c $(UTILS_OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ -lz
-
-txbview: txbview.c $(UTILS_OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ -lz
 
 ### test
 
