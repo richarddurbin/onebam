@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 19 11:01 2025 (rd109)
+ * Last edited: Sep 25 22:27 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -94,7 +94,7 @@ int main (int argc, char *argv[])
 	else die ("unknown onebam bam21read option %s - run without args for usage", *argv) ;
       if (argc != 2)
 	die ("onebam bam21read needs 2 not %d args; run without args for usage", argc) ;
-      if (!bam21read (argv[1], outFileName, *argv))
+      if (!bam21readSorted (argv[1], outFileName, *argv))
 	die ("failed to convert bam file %s to .1read file", *argv) ;
     }
   else if (!strcmp (command, "merge1read"))

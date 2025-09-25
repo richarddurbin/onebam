@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep  2 17:38 2025 (rd109)
+ * Last edited: Sep 25 22:26 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -56,18 +56,16 @@ char *derivedName (char *inName, char *tag) ;
 // onebamhts.c
 void setCramReference (char *cramRef) ;
 void auxAdd (char *oneCode, char *spec) ;
-bool bam21read(char *bamFileName, char *outFileName, char *accTaxName) ;
+bool bam21readSorted (char *bamFileName, char *outFileName, char *accTaxName) ;
 bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool isNames) ;
 bool bamMake1read (char *bamOneFileName, char *outFileName) ;
-bool makeBin (char *bamFileName, char *outTxbName, char *outAlbName, char *taxidFileName,
-	      int maxEdit, int prefix, int maxChars) ;
 
 // oneread.c
 bool merge1read (char *outfile, int nIn, char **infiles) ;
 bool report1read (char *readFileName, char *outFileName) ;
 
-// albcode.c
-void albReport (char *fileName, char *outFileName) ;
+// MSDsort.c
+void msd_sort (U8 *array, I64 nels, int rsize, int ksize, int depth, int mark, int nthreads) ;
 
 typedef struct {
   I32 prefix, suffix ;  // offsets in fixbuf of prefix and suffix

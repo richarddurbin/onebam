@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 19 10:56 2025 (rd109)
+ * Last edited: Sep 25 22:23 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -312,6 +312,17 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
   return true ;
 }
 
+bool onebam2bam (char *oneFileName, char *bamFileName) // reverses the previous function
+{
+  OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
+  OneFile   *of     = oneFileOpenRead (oneFileName, schema, "bam", 1) ;
+  if (!of) die ("failed to open ONEfile %s to read", oneFileName) ;
+  BamFile   *bf     = new0 (1, BamFile) ;
+  if (bamFileName) bf->f = sam_open (bamFileName, "w") ;
+  else bf->f = sam_open (derivedName (bamFileName, "bam"), "w") ;
+  return true ;
+}
+
 /********** threaded code to read .1bam records and output .1read  ************/
 
 typedef struct {
@@ -330,6 +341,12 @@ int txCompare (const void *a, const void *b)
 { TaxInfo *txa = (TaxInfo*)a, *txb = (TaxInfo*)b ;
   return txa->txid - txb->txid ;
 }
+
+typedef struct {
+  U32 i ;
+  U16 c ;
+  U16 n ;
+} Exception ; // must be the same size as TaxInfo, so we can abuse aTx for this
 
 #include <ctype.h>	// for tolower(), toupper()
 
@@ -469,6 +486,8 @@ static void *b2rThread (void *arg)
   return 0 ;
 }
 
+// The next function makes a 1read file from a 1bam file.  This can be threaded.
+
 bool bamMake1read (char *inFileName, char *outFileName)
 {
   OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
@@ -514,8 +533,9 @@ bool bamMake1read (char *inFileName, char *outFileName)
   return true ;
 }
 
-/************************************************************************************/
-/*********** this is a merge of bam21bam() and bamMake1read() from Claude ***********/
+/*******************************************************************************************/
+/*********** next direct bam to 1read ******************************************************/
+/*********** this is based on a merge of bam21bam() and bamMake1read() by Claude ***********/
 
 // this routine calculates the mismatch line in read space from the cigar and MD string
 // see  https://vincebuffalo.com/notes/2014/01/17/md-tags-in-bam-files.html for MD interpretation
@@ -841,6 +861,436 @@ bool bam21read(char *bamFileName, char *outFileName, char *accTaxFileName)
   newFree(maxMd, maxMdSize, char);
   hashDestroy(hTx);
   arrayDestroy(aTx);
+  bamFileClose(bf);
+  
+  return true;
+}
+
+#include <unistd.h>   // for getpid()
+
+static inline U8* bufPushChar (U8* b, char x) { char *bb = (char*)b ; *bb++ = x ; return (U8*)bb ; }
+static inline U8*  bufPushI32 (U8* b, I32 x) { I32 *bb = (I32*)b ; *bb++ = x ; return (U8*)bb ; }
+static inline char bufPopChar (U8* *b) { char x = *(char*)*b ; *b += sizeof(char) ; return x ; }
+static inline I32   bufPopI32 (U8* *b) { I32 x = *(I32*)*b ; *b += sizeof(I32) ; return x ; }
+
+// write the current contents of buf into a OneFile
+static void writeOneFile (Array oneFileNames, Array bLoc,
+			  char *firstName, int minNameShare, int maxNameLen)
+{
+  static OneSchema *schema = 0 ;
+  static char nameBase[64], *nameTail ;
+  if (!schema) // initialise
+    { schema = oneSchemaCreateFromText (schemaText) ;
+      sprintf (nameBase, "./onebam-%d-", getpid()) ;
+      nameTail = nameBase + strlen(nameBase) ;
+    }
+
+  if (!arrayMax(bLoc)) die ("writeOneFile() called empty - no BAM records or buffer too small") ;
+
+  printf ("entering writeOneFile %d for %d items: ",
+	  (int)arrayMax(oneFileNames), (int)arrayMax(bLoc)) ;
+  timeUpdate (stdout) ;
+
+  // open the OneFile and store its name in names
+  sprintf (nameTail, "%d", (int)arrayMax(oneFileNames)) ;
+  OneFile *of = oneFileOpenWriteNew (nameBase, schema, "read", true, 1) ;
+  if (!of) die ("failed to open ONEfile %s to write", nameBase) ;
+  array(oneFileNames,arrayMax(oneFileNames),char*) = strdup (nameBase) ;
+
+  // now set up an array to sort the query names and sort using Gene's msd_sort()
+  int ksize = maxNameLen - minNameShare ;
+  int rsize = ksize + sizeof(I32) ;
+  U8 *a = new0(rsize*arrayMax(bLoc), U8) ; // need new0 to give terminating NULs on names
+  I32 i, n = arrayMax(bLoc) ;
+  for (i = 0 ; i < n ; ++i)
+    { U8 *b = arr(bLoc,i,U8*) ;
+      if (*b++ != 'S') die ("no S found at start of sequence %d", i) ;
+      U8 nameLen = *b++, nameShare = *b++ ;
+      char *s = (char*)(a + rsize*i) ;
+      int shared = nameShare - minNameShare ;
+      if (shared) { memcpy (s, firstName+minNameShare, shared) ; s += shared ; }
+      memcpy (s, (char*)b, nameLen - nameShare) ;
+      *(I32*)(a + rsize*i + ksize) = i ;
+    }
+  msd_sort (a, n, rsize, ksize, 0, 0, 1) ;
+
+  // now write them out, in the new sorted order
+  char lastName[256] ;
+  for (i = 0 ; i < n ; ++i)
+    { char *nameEnd = (char*)(a + rsize*i) ;
+      I32 j = *(I32*)(nameEnd + ksize) ;
+      U8 *b = arr(bLoc,j,U8*) ; ++b ; // swallow the 'S' - checked above
+      U8  nameLen = *b++, nameShare = *b++ ; b += nameLen - nameShare ; // and the name stuff
+      I32 seqLen = bufPopI32 (&b) ;
+      oneWriteLine (of, 'S', seqLen, b) ; b += seqLen ;
+      if (!i) // first entry
+	{ strcpy (lastName, firstName) ;
+	  strncpy (lastName+minNameShare, nameEnd, nameLen-minNameShare) ;
+	  oneInt(of,0) = 0 ;
+	  oneWriteLine (of, 'J', nameLen, lastName) ;
+	}
+      else // diff from the last name
+	{ int k = 0 ; while (k < ksize && lastName[k] == nameEnd[k]) ++k ;
+	  if (k >= ksize) die ("need code to compress afer sorting") ;
+	  oneInt(of,0) = minNameShare + k ;
+	  oneWriteLine (of, 'J', nameLen - minNameShare - k, nameEnd + k) ;
+	}
+      strncpy (lastName, nameEnd, ksize) ;
+      I32 nException = bufPopI32 (&b) ;
+      for (j = 0 ; j < nException ; ++j)
+	{ Exception e = *(Exception*)b ; b += sizeof(Exception) ;
+	  oneInt(of,0) = e.i ; oneChar(of,1) = e.c ; oneInt(of,2) = e.n ;
+	  oneWriteLine (of, 'N', 0, 0) ;
+	}
+      if (*b == 'Q') // qualities
+	{ oneWriteLine (of, 'Q', seqLen, ++b) ;
+	  b += seqLen ;
+	}
+      if (*b == 'T') // taxon information
+	{ ++b ;
+	  oneInt(of,0) = bufPopI32 (&b) ; // max score
+	  oneWriteLine (of, 'M', seqLen, b) ; b += seqLen ;
+	  int  it, nt =  bufPopI32 (&b) ; // number of taxids
+	  TaxInfo *tx =  (TaxInfo*)b ;
+	  for (it = 0 ; it < nt ; ++it, ++tx)
+	    { oneInt(of,1) = tx->txid ; oneInt(of,1) = tx->bestScore ; oneInt(of,2) = tx->count ;
+	      oneWriteLine (of, 'T', 0, 0) ;
+	    }
+	}
+    }
+  
+  oneFileClose (of) ;
+  newFree (a, rsize*arrayMax(bLoc), U8) ;
+
+  printf ("    done writeOneFile: ") ; timeUpdate (stdout) ;
+}
+
+bool bam21readSorted (char *bamFileName, char *outFileName, char *accTaxFileName)
+{
+  if (!outFileName) outFileName = derivedName(bamFileName, "1read") ;
+  
+  BamFile *bf = bamFileOpenRead(bamFileName);
+  if (!bf) return false;
+  int nTargets = bf->h->n_targets;
+  printf("read %d references: ", nTargets); timeUpdate(stdout);
+  
+  // deal with targets - first sort them
+  int i, *revMap = new(nTargets, int);
+  accTaxName = bf->h->target_name ;
+  accTaxN = new(nTargets, I32) ;
+  I64 totTargetName = 0 ;
+  for (i = 0; i < nTargets; ++i)
+    { revMap[i] = i ;
+      totTargetName += strlen (accTaxName[i]) ;
+      accTaxN[i] = accParse (accTaxName[i]) ; // also truncates to stem as side effect
+    }
+  qsort(revMap, nTargets, sizeof(int), accTaxOrder);
+  printf ("sorted %d targets total length %lld\n", nTargets, (long long)totTargetName) ;
+
+  // and next map to taxids by merging with acc2taxid information in .1acctax file
+  int  *taxid = new0(nTargets+1, int) ;
+  OneSchema *schema = oneSchemaCreateFromText(schemaText);
+  OneFile *oa = oneFileOpenRead (accTaxFileName, schema, "acctax", 1) ;
+  if (!oa) die ("failed to open .1acctax file %s", accTaxFileName) ;
+  if (!oneGoto (oa, 'A', 1)) die ("no A lines in .1acctax file %s", accTaxFileName) ;
+  oneReadLine (oa) ; // must be the first A line
+  int tid    = oneInt(oa,0) ;
+  char accBuf[64] ; if (oneLen(oa) > 63) die ("acc root %s too long > 63", oneString(oa)) ;
+  strcpy (accBuf, oneString(oa)) ;
+  int  nFound = 0, nBlock = 0, nameComp ;
+  for (i = 0; i < nTargets; ++i)
+    { char *acc = accTaxName[revMap[i]] ;
+      I32   k   = accTaxN[revMap[i]] ;
+      while ((nameComp = strcmp(accBuf, acc)) < 0)
+	{ while (oneReadLine (oa) && !oneLen(oa)) { ; } // oneLen(oa) == 0 implies same string
+	  if (!oa->lineType) break ; // end of file
+	  strcpy (accBuf + oneInt(oa,3), oneString(oa)) ; // replace suffix
+	}
+      if (!nameComp) // a match
+	{ while (oneInt(oa,1) + oneInt(oa,2) - 1 < k)
+	    { if (!oneReadLine (oa)) { nameComp = 2 ; break ; } // use nameComp as flag
+	      if (oneLen(oa))
+		{ strcpy (accBuf + oneInt(oa,3), oneString(oa)) ; // replace suffix
+		  nameComp = 1 ;
+		  break ;
+		}
+	    }
+	  if (nameComp == 2) break ; // finish main i loop
+	  if (!nameComp && oneInt(oa,1) >= k) { taxid[revMap[i]+1] = tid ; ++nFound; }
+	}
+    }
+  oneFileClose (oa) ;
+  newFree(revMap, nTargets, int) ;
+  newFree(accTaxN, nTargets, I32) ;
+  printf("found %d taxids in %d acctax blocks: ", nFound, nBlock); timeUpdate(stdout) ;
+
+  // strategy is to write to a series of .1read files (2GB in memory) then merge
+  Array ofNames  = arrayCreate (16, char*) ;
+
+  // buffer in which we will accumulate the objects as we process them, then sort when full
+  I64   maxBuf   = (I64)1 << 32 ;
+  U8   *bufStart = new (maxBuf, U8) ;
+  U8   *bufEnd   = bufStart ;
+  Array bLoc     = arrayCreate (maxBuf>>7, U8*) ; // start of each object
+
+  // buffers for processing
+  char lastqName[256] ; *lastqName = 0 ;
+  char firstName[256] ; *firstName = 0 ;
+  int  minNameShare = 256 ;
+  int  maxNameLen   = 0 ;
+  int  seqBufSize   = 1024; char  *seq   = new(seqBufSize, char);
+  int  mLineSize    = 1024; char  *mLine = new(mLineSize, char);
+  // int readGroupSize = 128;  char *readGroup = new(readGroupSize, char); *readGroup = 0;
+  
+  // hash table and array for taxonomic info per sequence
+  Hash  hTx = hashCreate(8192);
+  Array aTx = arrayCreate(2048, TaxInfo);
+
+  // other counters etc.
+  I64  nRecord      = 0;
+  I64  seqLen       = 0;
+  I32  maxScore     = -(1<<30);
+  bool isMaxReverse = false;
+  int  maxCigarSize = 1024; I32  *maxCigar = new(maxCigarSize, I32);
+  int  maxMdSize    = 1024; char *maxMd    = new(maxMdSize, char);
+
+  while (true) // main loop to read sequences
+    { ++nRecord;
+      int res = sam_read1 (bf->f, bf->h, bf->b) ;
+      if (res < -1) die ("bamProcess failed to read bam record %lld", (long long)nRecord) ;
+      if (res == -1) break ; // end of file
+
+      I64   flag  = bf->b->core.flag ;
+      char *qName = bam_get_qname(bf->b) ;
+    
+      if (strcmp(lastqName, qName)) // new query sequence
+	{ strcpy(lastqName, qName); // first don't forget to update lastqName
+
+	  int nameLen = strlen (qName) ;
+	  if (nameLen > maxNameLen)
+	    { maxNameLen = nameLen ;
+	      if (nameLen > 255) die ("query name %s longer than 255", qName) ;
+	    }
+
+	  // process previous sequence if we have one
+	  if (!*firstName)
+	    strcpy (firstName, qName) ;
+	  else if (maxScore > -(1<<30))
+	    {
+	      // if will overflow buffer, write out oneFile and restart buffer
+	      if (bufEnd - bufStart
+		  + 1 + sizeof(I32) + seqLen + // 'M' + maxScore + mLine
+		  (1 + 3*arrayMax(aTx))*sizeof(I32) // tax info
+		  > maxBuf)
+		{ --arrayMax(bLoc) ;
+		  U8 *bufLast = arr(bLoc, arrayMax(bLoc), U8*) ;
+		  writeOneFile (ofNames, bLoc, firstName, minNameShare, maxNameLen) ;
+		  memcpy (bufStart, bufLast, bufEnd - bufLast) ;
+		  arrayMax(bLoc) = 1 ; bufEnd -= (bufLast-bufStart) ;
+		}
+	      
+	      // store max score and mismatch line from stored best alignment
+	      ENSURE_BUF_SIZE(mLine, mLineSize, seqLen+1, char);
+	      generateMline (mLine, seqLen, maxCigar, maxMd, isMaxReverse);
+	      bufEnd = bufPushChar (bufEnd, 'M') ;
+	      bufEnd = bufPushI32 (bufEnd, maxScore) ;
+	      memcpy(bufEnd,mLine,seqLen) ; bufEnd += seqLen ;
+	      
+	      // store taxonomic information
+	      if (arrayMax(aTx) > 1) arraySort(aTx, txCompare);
+	      bufEnd = bufPushI32 (bufEnd, arrayMax(aTx)) ;
+	      for (i = 0; i < arrayMax(aTx); ++i)
+		{ TaxInfo *tx = arrp(aTx, i, TaxInfo);
+		  bufEnd = bufPushI32 (bufEnd, tx->txid) ;
+		  bufEnd = bufPushI32 (bufEnd, tx->bestScore) ;
+		  bufEnd = bufPushI32 (bufEnd, tx->count) ;
+		}
+	    }
+      
+	  // Reset for new sequence
+	  hashClear(hTx) ;
+	  arrayMax(aTx) = 0 ;
+	  maxScore      = -(1<<30) ;
+      
+	  /* Ignore read groups for now
+	  // The correct way to deal with them would be with a DICT, written with counts at the end
+	  // Then code reading .1read files would have to read in the DICT first
+	  U8 *aux;
+	  if ((aux = bam_aux_get(bf->b, "RG")) && (s = bam_aux2Z(aux)) && strcmp(s, readGroup))
+	    { I64 len = strlen(s);
+	      oneWriteLine(of, 'G', len, s);
+	      ENSURE_BUF_SIZE(readGroup, readGroupSize, len+1, char);
+	      strcpy(readGroup, s);
+	    }
+	  */
+
+	  // Get new sequence
+	  seqLen = bf->b->core.l_qseq;
+	  ENSURE_BUF_SIZE(seq, seqBufSize, seqLen+1, char);
+	  char *s = seq, *bs = (char*)bam_get_seq(bf->b);
+	  if (flag & BAM_FREVERSE)
+	    for (i = seqLen; i--; )
+	      *s++ = binaryAmbig2text[(int)binaryAmbigComplement[(int)bam_seqi(bs,i)]];
+	  else
+	    for (i = 0; i < seqLen; ++i)
+	      *s++ = binaryAmbig2text[bam_seqi(bs,i)];
+	  *s = 0; // null terminate
+
+	  // calculate how much of qName to store
+	  char *p = firstName, *q = qName;
+	  while (*p && *p == *q) { ++p; ++q; }
+	  int nameShare = (q - qName) ;
+	  if (nameShare < minNameShare) minNameShare = nameShare ;
+      
+	  // store non-ACGT sequence exceptions, borrowing aTx since it is available and right-sized
+	  for (i = 0; i < seqLen; ++i)
+	    if (!acgtCheck[(int)seq[i]])
+	      { Exception *e = arrayp (aTx, arrayMax(aTx), Exception) ;
+		e->i = i ;
+		e->c = seq[i] ;
+		I64 n = 1 ;
+		while (++i < seqLen && seq[i] == e->c) n++ ;
+		e->n = n ;
+	      }
+      
+	  // get qualities, reversing them if necesssary
+	  q = (char*)bam_get_qual(bf->b); // reuse p, q as utility char* from J line code
+	  if (*q != '\xff')
+	    { if (flag & BAM_FREVERSE)
+		{ char t ;
+		  for (p = q + seqLen ; p-- > q ; ++q) { t = *p + 33 ; *p = *q + 33 ; *q = t ; }
+		}
+	      else
+		for (i = 0; i < seqLen; ++i) q[i] += 33;
+	    }
+
+	  if (bufEnd - bufStart
+	      + 1                                   // new sequence marker 'S'
+	      + 2 + nameLen - nameShare             // name
+	      + sizeof(I32) + seqLen                // seqLen + seq
+	      + sizeof(I32) + arrayMax(aTx)*sizeof(Exception) // exceptions
+	      + ((*q != '\xff')?(1+seqLen):0)         // qualities
+	      > maxBuf)
+	    { writeOneFile (ofNames, bLoc, firstName, minNameShare, maxNameLen) ;
+	      arrayMax(bLoc) = 0 ; bufEnd = bufStart ; 
+	    }
+
+	  // now write the location of the start of this object into the bLoc array
+	  array (bLoc, arrayMax(bLoc), U8*) = bufEnd ;
+
+	  // now write all the required information into the buffer
+	  bufEnd = bufPushChar (bufEnd, 'S') ;
+	  *bufEnd++ = nameLen ;
+	  *bufEnd++ = nameShare ;
+	  memcpy (bufEnd, firstName + nameShare, nameLen-nameShare) ; bufEnd += nameLen - nameShare ;
+	  bufEnd = bufPushI32 (bufEnd, seqLen) ;
+	  memcpy (bufEnd, seq, seqLen) ; bufEnd += seqLen ;
+	  bufEnd = bufPushI32 (bufEnd, (I32)arrayMax(aTx)) ;
+	  memcpy (bufEnd, arrp(aTx,0,Exception), arrayMax(aTx)*sizeof(Exception)) ;
+	  bufEnd += arrayMax(aTx)*sizeof(Exception) ;
+	  arrayMax(aTx) = 0 ; // need to reset this so it can accumuate taxon information
+	  if (*q == '\xff')
+	    { bufEnd = bufPushChar (bufEnd, 'Q') ;
+	      memcpy (bufEnd, q, seqLen) ; bufEnd += seqLen ;
+	    }
+	} // end of new sequence block
+
+      // Process current alignment - first find the txid
+      TaxInfo *tx ;
+      int j, txid = taxid[bf->b->core.tid+1];
+      if (hashAdd(hTx, hashInt(txid), &j))
+	{ tx = arrayp(aTx, j, TaxInfo);
+	  tx->txid = txid;
+	  tx->count = 0;
+	  tx->bestScore = -(1<<14);
+	}
+      else 
+	tx = arrp(aTx, j, TaxInfo);
+      ++tx->count;
+    
+      // Get alignment score
+      U8 *aux;
+      if (!(aux = bam_aux_get(bf->b, "AS"))) continue; // skip if no score
+      int score = bam_aux2i(aux);
+      if (score > tx->bestScore) tx->bestScore = score;
+    
+      // Check if this is the best alignment for mLine calculation
+      if (score > maxScore)
+	{ maxScore = score;
+	  isMaxReverse = (flag & BAM_FREVERSE) ? true : false;
+
+	  // Store CIGAR
+	  I64 nCigar = bf->b->core.n_cigar;
+	  ENSURE_BUF_SIZE(maxCigar, maxCigarSize, nCigar+1, I32);
+	  memcpy (maxCigar, bam_get_cigar(bf->b), nCigar*sizeof(I32)) ;
+	  maxCigar[nCigar] = 0 ; // use this in generateMline()
+
+	  // Store MD string
+	  char *s ;
+	  if ((aux = bam_aux_get(bf->b, "MD")) && (s = bam_aux2Z(aux)))
+	    { ENSURE_BUF_SIZE(maxMd, maxMdSize, strlen(s)+1, char);
+	      strcpy(maxMd, s);
+	    }
+	  else
+	    *maxMd = 0 ;
+	}
+    }
+    
+  // Process final sequence
+  if (*firstName)
+    { if (maxScore > -(1<<30)) // same code as above
+	{ if (bufEnd - bufStart
+	      + 1 + sizeof(I32) + seqLen + // 'M' + maxScore + mLine
+	      (1 + 3*arrayMax(aTx))*sizeof(I32) // tax info
+	      > maxBuf)
+	    { --arrayMax(bLoc) ;
+	      U8 *bufLast = arr(bLoc, arrayMax(bLoc), U8*) ;
+	      writeOneFile (ofNames, bLoc, firstName, minNameShare, maxNameLen) ;
+	      memcpy (bufStart, bufLast, bufEnd - bufLast) ;
+	      arrayMax(bLoc) = 1 ; bufEnd -= (bufLast-bufStart) ;
+	    }
+
+	  ENSURE_BUF_SIZE(mLine, mLineSize, seqLen+1, char);
+	  generateMline (mLine, seqLen, maxCigar, maxMd, isMaxReverse);
+	  bufEnd = bufPushChar (bufEnd, 'T') ;
+	  bufEnd = bufPushI32 (bufEnd, maxScore) ;
+	  memcpy(bufEnd,mLine,seqLen) ; bufEnd += seqLen ;
+	      
+	  // store taxonomic information
+	  if (arrayMax(aTx) > 1) arraySort(aTx, txCompare) ;
+	  bufEnd = bufPushI32 (bufEnd, (I32)arrayMax(aTx)) ;
+	  for (i = 0; i < arrayMax(aTx); ++i)
+	    { TaxInfo *tx = arrp(aTx, i, TaxInfo);
+	      bufEnd = bufPushI32 (bufEnd, tx->txid) ;
+	      bufEnd = bufPushI32 (bufEnd, tx->bestScore) ;
+	      bufEnd = bufPushI32 (bufEnd, tx->count) ;
+	    }
+	}
+      writeOneFile (ofNames, bLoc, firstName, minNameShare, maxNameLen) ;
+    }
+
+  printf("processed %lld records\n", (long long)nRecord) ;
+
+  if (arrayMax(ofNames) == 1) // move it
+    rename (arr(ofNames,0,char*), outFileName) ;
+  else if (merge1read (outFileName, arrayMax(ofNames), arrp(ofNames,0,char*)))
+    { int i ;
+      for (i = 0 ; i < arrayMax(ofNames) ; ++i) remove (arr(ofNames,i,char*)) ;
+    }
+  else
+    die ("failed to merge %d files", (int)arrayMax(ofNames)) ;
+  
+  // Cleanup
+  newFree(taxid, nTargets+1, int);
+  newFree(seq, seqBufSize, char);
+  newFree(mLine, mLineSize, char);
+  newFree(maxCigar, maxCigarSize, I32);
+  newFree(maxMd, maxMdSize, char);
+  hashDestroy(hTx);
+  arrayDestroy(aTx);
+  { int i ; for (i = 0 ; i < arrayMax(ofNames) ; ++i) free(arr(ofNames,i,char*)) ; }
+  arrayDestroy (ofNames) ;
+  arrayDestroy (bLoc) ;
   bamFileClose(bf);
   
   return true;
