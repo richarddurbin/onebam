@@ -43,9 +43,15 @@ oneread.o: oneread.c onebam.h merge.h
 seqio.o: seqio.c seqio.h
 	$(CC) $(CFLAGS) $(SEQIO_OPTS) -c $^
 
+MSDsort.o: MSDsort.c gene_core.h
+	$(CC) $(CFLAGS) $(SEQIO_OPTS) -c $^
+
+gene_core.o: gene_core.c gene_core.h
+	$(CC) $(CFLAGS) $(SEQIO_OPTS) -c $^
+
 ### programs
 
-onebam: onebam.c onebamhts.o oneread.o seqio.o ONElib.o $(UTILS_OBJS)
+onebam: onebam.c onebamhts.o oneread.o seqio.o ONElib.o MSDsort.o gene_core.o $(UTILS_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(SEQIO_LIBS) $(HTS_LIBS) $(LIBS)
 
 ONEview: ONEview.c ONElib.o
