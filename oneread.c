@@ -5,7 +5,7 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 28 19:20 2025 (rd109)
+ * Last edited: Sep 28 19:37 2025 (rd109)
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -76,7 +76,8 @@ bool merge1read (char *outfile, int nIn, char **infiles)
 
       // for now just check that if there are prefixes then they are all the same
       if (oneGoto (in->of, 'P', 1))
-	{ if (!i) prefix = oneString (in->of) ;
+	{ oneReadLine (in->of) ; // don't forget this!
+	  if (!i) prefix = oneString (in->of) ;
 	  else if (strcmp (prefix, oneString (in->of)))
 	    die ("prefix mismatch %s in % versus %s in %s",
 		 prefix, infiles[0], oneString(in->of), infiles[i]) ;

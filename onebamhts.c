@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 28 18:01 2025 (rd109)
+ * Last edited: Sep 28 19:47 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -734,6 +734,30 @@ static void write1read (Array oneFileNames, Array bLoc,
 	  int oldMax = arrayMax(aTx) ;
 	  arrayp(aTx,oldMax+nt-1,TaxInfo)->txid = 1 ; // set arrayMax and make space
 	  memcpy (arrp(aTx,oldMax,TaxInfo), (TaxInfo*)b, nt*sizeof(TaxInfo)) ;
+	}
+    }
+
+  if (arrayMax (aTx)) // need to write the final block
+    { oneInt(of,0) = maxScore ;
+      oneWriteLine (of, 'M', seqLen, mLine) ;
+      if (arrayMax(aTx) > 1) // sort and pack aTx
+	{ arraySort (aTx, txCompare) ;
+	  TaxInfo *iTx = arrp(aTx,-1,TaxInfo), *jTx = arrp(aTx,0,TaxInfo) ;
+	  TaxInfo *nTx = jTx + arrayMax(aTx) ; // end of array
+	  while (jTx < nTx)
+	    { if (++iTx < jTx) *iTx = *jTx ;
+	      while (++jTx < nTx && jTx->txid == iTx->txid)
+		{ iTx->count += jTx->count ;
+		  if (jTx->bestScore > iTx->bestScore) iTx->bestScore = jTx->bestScore ;
+		}
+	    }
+	  arrayMax(aTx) = iTx - arrp(aTx,0,TaxInfo) + 1 ;
+	}
+      int  it ;
+      TaxInfo *tx =  arrp(aTx,0,TaxInfo) ;
+      for (it = 0 ; it < arrayMax(aTx) ; ++it, ++tx)
+	{ oneInt(of,0) = tx->txid ; oneInt(of,1) = tx->bestScore ; oneInt(of,2) = tx->count ;
+	  oneWriteLine (of, 'T', 0, 0) ;
 	}
     }
   
