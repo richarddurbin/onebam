@@ -5,7 +5,7 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Sep  1 18:04 2025 (rd109)
+ * Last edited: Sep 28 13:14 2025 (rd109)
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -18,14 +18,13 @@ typedef struct {
   OneFile *of ;
   I64      seqLen ;
   U8      *dna ;      // keep pointer to 2bit form - requires less work
-  int      lcp ;
   char     name[1024] ;
 } Input ;
 
 bool yieldName (int t, void *arg, char **v, int *lcp) // here arg is an array of Input
 {
   Input *in = &(((Input*)arg)[t]) ;
-  if (in->of) { *lcp = in->lcp ; *v = in->name ; return true ; }
+  if (in->of) { *v = in->name ; return true ; }
   else return false ;
 }
 
@@ -43,13 +42,11 @@ void loadSequence (Input *in)
 	 in->of->lineType, in->fileName, in->of->line) ;
   in->seqLen = oneLen(in->of) ;
   in->dna = oneDNA2bit(in->of) ;
-  while (oneReadLine (in->of) && (in->of->lineType != 'J')) ; // really should be next line...
-  if (!in->of->lineType) die ("no J line found in %s", in->fileName) ;
-  in->lcp = oneInt(in->of, 0) ;
-  if (in->lcp + oneLen(in->of) > 1024)
-    die ("read name length %d > 1024 file %s line %d",
-	 in->lcp + oneLen(in->of), in->fileName, in->of->line) ;
-  strcpy (in->name + in->lcp, oneString(in->of)) ;
+  while (oneReadLine (in->of) && (in->of->lineType != 'I')) ; // really should be next line...
+  if (!in->of->lineType) die ("no I line found in %s", in->fileName) ;
+  if (oneLen(in->of) > 1024)
+    die ("read name length %d > 1024 file %s line %d", oneLen(in->of), in->fileName, in->of->line) ;
+  strcpy (in->name, oneString(in->of)) ;
 }
 
 bool merge1read (char *outfile, int nIn, char **infiles)
@@ -67,6 +64,7 @@ bool merge1read (char *outfile, int nIn, char **infiles)
 
   // next build the inputs array and create the read merge object
   Input *inputs = new0 (nIn, Input) ;
+  char  *prefix = 0 ;
   for (i = 0 ; i < nIn ; ++i)
     { Input *in = &inputs[i] ;
       in->fileName = infiles[i] ;
@@ -75,6 +73,16 @@ bool merge1read (char *outfile, int nIn, char **infiles)
       if (!oneFileCheckSchemaText (in->of, "P 3 seq\nO S 1 3 DNA\nD J 2 3 INT 6 STRING\n"
 				   "D M 2 3 INT 6 STRING\nD T 3 3 INT 3 INT 3 INT\n"))
 	die ("schema mismatch for input file %s", in->fileName) ;
+
+      // for now just check that if there are prefixes then they are all the same
+      if (oneGoto (in->of, 'P', 1))
+	{ if (!i) prefix = oneString (in->of) ;
+	  else if (strcmp (prefix, oneString (in->of)))
+	    die ("prefix mismatch %s in % versus %s in %s",
+		 prefix, infiles[0], oneString(in->of), infiles[i]) ;
+	}
+      else if (prefix) die ("prefix %s in %s but none in %s", prefix, infiles[0], infiles[i]) ;
+
       if (oneGoto (in->of, 'S', 1) && oneReadLine(in->of)) // oneReadLine required to read S line
 	{ loadSequence (in) ; ++nSin ; }
       else
@@ -82,6 +90,8 @@ bool merge1read (char *outfile, int nIn, char **infiles)
 	  in->of = 0 ;
 	}
     }
+  if (prefix) oneWriteLine (ofOut, 'P', strlen(prefix), prefix) ;
+  
   Merge   *readMerge = mergeCreateString (nIn, inputs, yieldName) ;
 
   // do this now because inside the loop we will mergeRecreate(txMerge)
@@ -90,19 +100,16 @@ bool merge1read (char *outfile, int nIn, char **infiles)
 
   // now start the merge process
   int    nName, *nameList, nTx, *txList ;
-  char   lastOutName[1024] ; *lastOutName = 0 ;
+//  char   lastOutName[1024] ; *lastOutName = 0 ;
   while ((nName = mergeNext (readMerge, &nameList)))
     { Input *in = &inputs[nameList[0]] ; // this is an example to copy the shared information from
 
       // first write the sequence record 'S'
       oneWriteLineDNA2bit (ofOut, 'S', in->seqLen, in->dna) ; // write the sequence record
 
-      // and the name in lcp/suffix form 'J'
-      char *p = lastOutName, *q = in->name ; while (*p && *p == *q) { ++p ; ++q ; }
-      oneInt(ofOut,0) = (I64)(q - in->name) ;
-      oneWriteLine (ofOut, 'J', strlen(q), q) ;
-      strcpy (p, q) ; // copy the distinct suffix onto the shared prefix to update lastOutName
-
+      // then the name
+      oneWriteLine (ofOut, 'I', strlen(in->name), in->name) ;
+      
       if (nName == 1) // all very simple - go to next S line
 	{ while ((t = oneReadLine(in->of)) && t != 'S')
 	    { oneWriteLineFrom (ofOut, in->of) ; // copy line

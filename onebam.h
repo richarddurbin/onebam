@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 25 22:26 2025 (rd109)
+ * Last edited: Sep 28 18:03 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -36,8 +36,10 @@ static char *schemaText =
   "O G 1 6 STRING               read group: name - only do this when it changes\n"
   "G S                          groups sequences\n"
   ".\n"
+  "O P 1 6 STRING               identifier prefix - for 1read files\n"
+  ".\n"
   "O S 1 3 DNA                  the sequence\n"
-  "D J 2 3 INT 6 STRING         identifier: updates previous with <STRING> from character <INT>\n"
+  "D I 1 6 STRING               identifier\n"
   "D N 3 3 INT 4 CHAR 3 INT     non-acgt base: pos (0-indexed), base, number\n"
   "D Q 1 6 STRING               quality: Q values (ascii string = q+33)\n"
   ". // the following lines for 1read\n"
