@@ -5,7 +5,7 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 28 13:14 2025 (rd109)
+ * Last edited: Sep 28 19:20 2025 (rd109)
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -70,7 +70,7 @@ bool merge1read (char *outfile, int nIn, char **infiles)
       in->fileName = infiles[i] ;
       if (!(in->of = oneFileOpenRead (in->fileName, 0, "read", 1)))
 	die ("failed to open .1read file %s", in->fileName) ;
-      if (!oneFileCheckSchemaText (in->of, "P 3 seq\nO S 1 3 DNA\nD J 2 3 INT 6 STRING\n"
+      if (!oneFileCheckSchemaText (in->of, "P 3 seq\nO S 1 3 DNA\nD I 1 6 STRING\n"
 				   "D M 2 3 INT 6 STRING\nD T 3 3 INT 3 INT 3 INT\n"))
 	die ("schema mismatch for input file %s", in->fileName) ;
 
