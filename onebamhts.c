@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 28 19:47 2025 (rd109)
+ * Last edited: Oct  2 00:17 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -108,9 +108,26 @@ void auxAdd (char *oneCode, char *spec)
   a->fmt = (spec[3] == 'B') ? spec[4] + 1 : spec[3] ;
 }
 
-static char **NAMES ; // ugly - wanted to use qsort_r(), but can't deal with platform inconsistency
-static int accOrder (const void *a, const void *b)
-{ return strcmp(NAMES[*(int*)a], NAMES[*(int*)b]) ; }
+static I32 accParse (char *acc) // truncates acc to its prefix before terminal digits
+{
+  char *s = acc ; while (*s) ++s ; // go to end of acc
+  while (--s >= acc && *s >= '0' && *s <= '9') ; // go to last char before terminal digits (if any)
+  if (s >= acc && *s == '.') *s = 0 ; // delete the version
+  while (--s >= acc && *s >= '0' && *s <= '9') ; // go to last char before terminal digits (if any)
+  char *term = ++s ;
+  U64 n = 0 ; while (*s >= '0' && *s <= '9') n = n * 10 + (*s++ - '0') ;
+  if (n > I32MAX) die ("n %lld too big in accParse", (long long) n) ;
+  *term = 0 ; // truncate
+  return (I32) n ;
+}
+
+static char **accTaxName ;
+static I32   *accTaxN ;
+static int accTaxOrder (const void *a, const void *b)
+{ int retVal = strcmp(accTaxName[*(int*)a], accTaxName[*(int*)b]) ;
+  if (retVal) return retVal ;
+  else return accTaxN[*(int*)a] - accTaxN[*(int*)b] ;
+}
 
 static const char binaryAmbigComplement[16] =
   { 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 } ;
@@ -119,7 +136,7 @@ static const char binaryAmbig2text[] = "=ACMGRSVTWYHKDBN" ;
 #define ENSURE_BUF_SIZE(buf,size,newSize,Type)  if (newSize>size) { Type* newBuf = new0(newSize,Type) ; \
     memcpy(newBuf,buf,size*sizeof(Type)) ; newFree(buf,size,Type) ; size = newSize ; buf = newBuf ; }
 
-bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool isNames)
+bool bam21bam (char *bamFileName, char *outFileName, char *accTaxFileName, bool isNames)
 {
   BamFile *bf = bamFileOpenRead (bamFileName) ;
   if (!bf) return false ;
@@ -155,25 +172,55 @@ bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool i
   
   // deal with the targets - first sort them, allowing for tid 0 = * (no target)
   int *tidMap = new(nTargets+1,int), *revMap = new(nTargets,int) ;
-  for (i = 0 ; i < nTargets ; ++i) revMap[i] = i ;
+  accTaxName = bf->h->target_name ;
+  accTaxN = new(nTargets, I32) ;
+  I64 totTargetName = 0 ;
+  for (i = 0; i < nTargets; ++i)
+    { revMap[i] = i ;
+      totTargetName += strlen (accTaxName[i]) ;
+      accTaxN[i] = accParse (accTaxName[i]) ; // also truncates to stem as side effect
+    }
+  qsort(revMap, nTargets, sizeof(int), accTaxOrder);
+  printf ("sorted %d targets total length %lld\n", nTargets, (long long)totTargetName) ;
   
-  NAMES = bf->h->target_name ; qsort (revMap, nTargets, sizeof(int), accOrder) ;
-
   int *taxid = new0(nTargets+1,int) ;
-  if (taxidFileName) // merge the header targets to this to identify the taxids
-    { FILE *tf = fopen (taxidFileName, "r") ; if (!tf) die ("failed to open taxid file %s", taxidFileName) ;
-      char accBuf[32] ; *accBuf = 0 ;
-      int  tid, nFound = 0, nT = 0, comp ;
-      for (i = 0 ; i < nTargets ; ++i)
-	{ char *acc = bf->h->target_name[revMap[i]] ;
-	  while ((comp = strcmp (accBuf, acc)) < 0)
-	    { if (fscanf (tf, "%s\t%d\n", accBuf, &tid) != 2) break ;
-	      ++nT ;
+  if (accTaxFileName) // merge the header targets to this to identify the taxids
+    { OneFile *oa = oneFileOpenRead (accTaxFileName, schema, "acctax", 1) ;
+      if (!oa) die ("failed to open .1acctax file %s", accTaxFileName) ;
+      if (!oneGoto (oa, 'A', 1)) die ("no A lines in .1acctax file %s", accTaxFileName) ;
+      oneReadLine (oa) ; // must be the first A line
+      char accBuf[64] ; if (oneLen(oa) > 63) die ("acc root %s too long > 63", oneString(oa)) ;
+      strcpy (accBuf, oneString(oa)) ;
+      int  nFound = 0, nBlock = 0, nameComp ;
+      bool isNewBlock = false ;
+      for (i = 0; i < nTargets; ++i)
+	{ char *acc = accTaxName[revMap[i]] ;
+	  I32   k   = accTaxN[revMap[i]] ;
+	  while ((nameComp = strcmp(accBuf, acc)) < 0)
+	    { while (oneReadLine (oa) && !oneLen(oa)) { ; } // oneLen(oa) == 0 implies same string
+	      isNewBlock = true ;
+	      if (!oa->lineType) break ; // end of file
+	      strcpy (accBuf + oneInt(oa,3), oneString(oa)) ; // replace suffix
 	    }
-	  if (!comp) { taxid[revMap[i]+1] = tid ; ++nFound ; }
+	  if (!nameComp) // a match
+	    { while (oneInt(oa,1) + oneInt(oa,2) <= k)
+		{ if (!oneReadLine (oa)) { nameComp = 2 ; break ; } // use nameComp as flag
+		  isNewBlock = true ;
+		  if (oneLen(oa))
+		    { strcpy (accBuf + oneInt(oa,3), oneString(oa)) ; // replace suffix
+		      nameComp = 1 ;
+		      break ;
+		    }
+		}
+	      if (nameComp == 2) break ; // finish main i loop
+	      if (!nameComp && oneInt(oa,1) <= k)
+		{ taxid[revMap[i]+1] = oneInt(oa,0) ;
+		  ++nFound ;
+		  if (isNewBlock) { ++nBlock ; isNewBlock = false ; }
+		}
+	    }
 	}
-      fclose (tf) ;
-      printf ("found %d taxids in %d txid2acc entries: ", nFound, nT) ; timeUpdate (stdout) ;
+      oneFileClose (oa) ;
     }
 
   tidMap[0] = 0 ;
@@ -588,27 +635,6 @@ static void generateMline (char *mLine, int seqLen, I32 *cigar, char *md, bool i
 	{ char t = mLine[i] ; mLine[i] = mMap[mLine[j]] ; mLine[j] = mMap[t] ; }
       if (i == j) mLine[i] = mMap[mLine[i]] ;
     }
-}
-
-static I32 accParse (char *acc) // truncates acc to its prefix before terminal digits
-{
-  char *s = acc ; while (*s) ++s ; // go to end of acc
-  while (--s >= acc && *s >= '0' && *s <= '9') ; // go to last char before terminal digits (if any)
-  if (s >= acc && *s == '.') *s = 0 ; // delete the version
-  while (--s >= acc && *s >= '0' && *s <= '9') ; // go to last char before terminal digits (if any)
-  char *term = ++s ;
-  U64 n = 0 ; while (*s >= '0' && *s <= '9') n = n * 10 + (*s++ - '0') ;
-  if (n > I32MAX) die ("n %lld too big in accParse", (long long) n) ;
-  *term = 0 ; // truncate
-  return (I32) n ;
-}
-
-static char **accTaxName ;
-static I32   *accTaxN ;
-static int accTaxOrder (const void *a, const void *b)
-{ int retVal = strcmp(accTaxName[*(int*)a], accTaxName[*(int*)b]) ;
-  if (retVal) return retVal ;
-  else return accTaxN[*(int*)a] - accTaxN[*(int*)b] ;
 }
 
 #include <unistd.h>   // for getpid()
