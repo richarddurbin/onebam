@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 25 22:27 2025 (rd109)
+ * Last edited: Oct  2 00:27 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -49,22 +49,23 @@ static char usage[] =
   "      -o <ZZ.1read>                    output file - default is YY.1read for input YY.bam\n"
   "    merge1read [*.1read]+         merge .1read files\n"
   "      -o <ZZ.1read>                    output file - default is 'combined.1read'\n"
-  "    report1read <XX.1read>        report on contents of .1read file\n"
+  "    report1read <XX.1read>        report on contents of .1read file // needs more work...\n"
   "      -o <ZZ.report>                   output to named file rather than stdout\n"
   "    makeAccTax <XX.tsv>           convert acc2taxid tab-separated file to .1acctax\n"
   "      -o <ZZ.1acctax>                  output file - default is XX.1acctax for input XX.*\n"
   "    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bam\n"
-  "      -taxid <XX.tsv>                  file with lines <acc>\\ttaxid\\n sorted on acc\n"
+  "      -accTax <YY.1acctax>             file with lines <acc>\\ttaxid\\n sorted on acc\n"
   "         NB you must give taxids if you plan to use your .1bam to make .1read\n"              
   "      -aux <tag>:<fmt> <char>          record BAM tag with OneCode <char>, e.g. -aux AS:i s\n"
   "         NB you must use '-aux AS:i s -aux MD:Z m' if you plant to use your .1bam to make .1read\n"
   "      -names                           keep sequence names [default to drop names]\n"
   "      -cramref <file_name|URL>         reference for CRAM - needed to read cram\n"
+#ifndef HIDE
   "    1bam21read <XX.1bam>          convert .1bam file to .1read (simplified information per read)\n"
+  // no - this is not sorted so not valid
   "      -T <nthreads>                    number of threads [8]\n"
   "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
-#ifndef HIDE
   "    1bam2bam <XX.1bam>            back-convert .1bam to .bam\n"
   "      -o <ZZ.bam>                      output file - default is XX.bam for input XX.1bam\n"
   "    numberSeq <XX.fq[.gz]>        make .1seq file from fq, plus new fq file with ints for names\n"
@@ -84,7 +85,7 @@ int main (int argc, char *argv[])
   char *command = *argv ; ++argv ; --argc ;
 
   char *outFileName = 0 ;
-  char *taxidFileName = 0 ;
+  char *accTaxFileName = 0 ;
   bool  isNames = false ;
 
   if (!strcmp (command, "bam21read"))
@@ -131,8 +132,8 @@ int main (int argc, char *argv[])
     { while (argc && **argv == '-')
 	if (!strcmp (*argv, "-o") && argc > 1)
 	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else if (!strcmp (*argv, "-taxid") && argc > 1)
-	  { taxidFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-accTax") && argc > 1)
+	  { accTaxFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
 	else if (!strcmp (*argv, "-names"))
 	  { isNames = true ; ++argv ; --argc ; }
 	else if (!strcmp (*argv, "-aux") && argc > 2)
@@ -141,7 +142,7 @@ int main (int argc, char *argv[])
 	  { setCramReference (argv[1]) ; argv += 2 ; argc -= 2 ; }
 	else die ("unknown onebam bam21bam option %s - run without args for usage", *argv) ;
       if (argc != 1) die ("onebam bam21bam needs 1 not %d args; run without args for usage", argc) ;
-      if (!bam21bam (*argv, outFileName, taxidFileName, isNames))
+      if (!bam21bam (*argv, outFileName, accTaxFileName, isNames))
 	die ("failed to convert bam file %s", *argv) ;
     }
   else if (!strcmp (command, "1bam21read"))
