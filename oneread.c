@@ -5,12 +5,253 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 28 19:37 2025 (rd109)
+ * Last edited: Oct  1 23:36 2025 (rd109)
+ * * Sep 30 04:08 2025 (rd109): added oneReader package, and dust()
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
  */
 
 #include "onebam.h"
+
+/********* OneReader API **********/
+
+typedef struct {
+  int      nThreads ;
+  OneFile *of ;
+  int      prefixLen ;
+  int      wCount[64] ; // for dust calculation
+} OneReaderPrivate ;
+
+OneReader *oneReaderCreate (char *fileName, int nThreads)
+{
+  OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
+  OneFile *of = oneFileOpenRead (fileName, schema, "read", nThreads) ;
+  if (!of) return 0 ;
+
+  OneReader *or = new0 (nThreads, OneReader) ;
+
+  OneReaderPrivate *op = new0 (nThreads, OneReaderPrivate) ;
+  or->private = (void*) op ;
+  op->nThreads = nThreads ;
+  op->of = of ;
+  
+  if (oneGoto (of, 'O', 1) && oneReadLine (of))
+    { or->namePrefix = oneString (of) ;
+      op->prefixLen = oneLen (of) ;
+    }
+  if (!oneReadLine (of) || of->lineType != 'S')
+    { oneGoto (of, 'S', 1)  ; oneReadLine (of) ; }
+
+  int maxSeqLen, maxNameLen, maxTax ;
+  oneReaderStats (or, 0, &maxSeqLen, 0, &maxNameLen, &maxTax) ; // must come after namePrefix
+  
+  int i ;
+  for (i = 0 ; i < nThreads ; ++ i)
+    { OneReader *ori = &or[i] ;
+      ori->name = new0 (maxNameLen+1, char) ;
+      if (op->prefixLen) strcpy (ori->name, or->namePrefix) ; // namePrefix is fixed and shared
+      ori->taxid = new (maxTax, int) ;
+      ori->taxCount = new (maxTax, int) ;
+      ori->taxBestScore = new (maxTax, int) ;
+      if (i > 0)
+	{ OneReaderPrivate *opi = op + i ;
+	  ori->private = (void*) opi ;
+	  opi->of = of + i ;
+	  opi->prefixLen = op->prefixLen ;
+	  oneGoto (opi->of, 'S', 1) ; oneReadLine (opi->of) ; // sets up at start of first sequence
+	}
+    }
+
+  return or ;
+}
+
+bool oneReaderGoto (OneReader *or, U64 i)
+{ OneFile *of = ((OneReaderPrivate*)or->private)->of ;
+  if (i < 0) return false ;
+  else if (i == 0) return oneGoto (of, 'S', 1) && oneReadLine (of) ;
+  else if (oneGoto (of, 'S', i) && oneReadLine (of) && oneReaderNext (or)) return true ;
+  else return false ;
+}
+
+void oneReaderStats (OneReader *or,
+		     U64 *nReads,       // number of reads in the file
+		     int *maxSeqLen,    // maximum sequence length
+		     U64 *totSeqLen,    // total sequence length
+		     int *maxNameLen,   // maximum name length
+		     int *maxTax)       // max value of nTaxid
+{ if (!or || !or->private) return ;
+  OneFile *of = ((OneReaderPrivate*)or->private)->of ;
+  I64 a, b, c ;
+  if (nReads || maxSeqLen || totSeqLen)
+    { oneStats (of, 'S', &a, &b, &c) ;
+      if (nReads) *nReads = (U64) a ;
+      if (maxSeqLen) *maxSeqLen = (int) b ;
+      if (totSeqLen) *totSeqLen = (U64) c ;
+    }
+  if (maxNameLen)
+    { oneStats (of, 'I', 0, &a, 0) ;
+      *maxNameLen = (int) a ;
+      *maxNameLen += ((OneReaderPrivate*)or->private)->prefixLen ;
+    }
+  if (maxTax)
+    { oneStatsContains (of, 'S', 'T', &a, 0) ;
+      *maxTax = (int) a ;
+    }
+}
+
+bool oneReaderNext (OneReader *or)
+{
+  OneReaderPrivate *op = (OneReaderPrivate*)or->private ;
+  OneFile *of = op->of ;
+  if (of->lineType != 'S') { printf ("**lineType %c\n", of->lineType) ; return false ; }
+  or->seqLen = oneLen(of) ;
+  or->seq = oneDNAchar(of) ; // NB we use the ONElib 'S' buffer
+  or->dustScore = dust (or->seq, or->seqLen, 64, op->wCount) ;
+  or->nTax = 0 ;
+  while (oneReadLine (of) && of->lineType != 'S')
+    switch (of->lineType)
+      {
+      case 'I':
+	or->nameLen = op->prefixLen + oneLen(of) ;
+	or->nameEnd = oneString(of) ;
+	memcpy (or->name + op->prefixLen, or->nameEnd, oneLen(of)) ;
+	break ;
+      case 'N': // NB we are overwriting the ONElib 'S' buffer - OK
+	{ int i = oneInt(of,0) ; char c = oneChar(of,1) ; int n = oneInt(of,2) ;
+	  while (n--) or->seq[i++] = c ;
+	}
+	break ;
+      case 'Q': // NB we are using and overwriting the ONElib 'Q' buffer - OK
+	or->qual = (U8*)oneString(of) ;
+	{ int i ; for (i = 0 ; i < or->seqLen ; ++i) or->qual[i] -= 33 ; }
+	break ;
+      case 'M':
+	or->maxScore = oneInt(of,0) ;
+	or->mLine = oneString(of) ;
+	break ;
+      case 'T':
+	or->taxid[or->nTax] = oneInt(of,0) ;
+	or->taxBestScore[or->nTax] = oneInt(of,1) ;
+	or->taxCount[or->nTax] = oneInt(of,2) ;
+	++or->nTax ;
+	break ;
+      default:
+	die ("unknown linetype %c at line %lld sequence %d in .1read file %s",
+	     of->lineType, of->line, oneObject(of,'S'), oneFileName (of)) ;
+      }
+  return true ;
+}
+
+void oneReaderDestroy (OneReader *or)
+{ if (!or) return ;
+  OneReaderPrivate *op = (OneReaderPrivate*)or->private ;
+  OneFile *of = op->of ; // cache because we will free private
+  int nThreads = op->nThreads ;
+
+  int maxSeqLen, maxNameLen, maxTax ;
+  oneReaderStats (or, 0, &maxSeqLen, 0, &maxNameLen, &maxTax) ; // must come here
+
+  int i ;
+  for (i = 0 ; i < nThreads ; ++i)
+    { OneReader *ori = or + i ;
+      newFree (ori->name, maxNameLen+1, char) ;
+      newFree (ori->taxid, maxTax, int) ;
+      newFree (ori->taxCount, maxTax, int) ;
+      newFree (ori->taxBestScore, maxTax, int) ;
+    }
+
+  oneFileClose (of) ; // closing the master closes all the slaves and releases line buffers
+  newFree (op, nThreads, OneReaderPrivate) ;
+  newFree (or, nThreads, OneReader) ;
+}
+
+#ifdef READER_TEST1 // simple example
+
+// compile with: gcc -DREADER_TEST1 -o reader oneread.c ONElib.c merge.c utils.c -lz
+
+int main (int argc, char *argv[])
+{
+  --argc ; ++argv ; // skip program name
+  if (argc != 2) die ("usage: readReport <.1read file>  <i> // reports on i'th read in file") ;
+  OneReader *or = oneReaderCreate (*argv, 1) ;
+  if (!or) die ("failed to open .1read file %s", *argv) ;
+  U64 i = atoi(*++argv) ;
+  if (i <= 0) die ("second argument %s must be a positive integer", *argv) ;
+  if (!oneReaderGoto (or, i)) die ("failed to locate to %llu", (long long unsigned)i) ;
+  printf ("read %llu %s seqLen %d seq %s\n", (long long unsigned)i, or->name, or->seqLen, or->seq) ;
+  printf ("maxScore %d dustScore %.1f mLine %s\n", or->maxScore, or->dustScore, or->mLine) ;
+  printf   ("nTax %3d taxid   count  bestScore\n", or->nTax) ;
+  int j ;
+  for (j = 0 ; j < or->nTax ; ++j)
+    printf ("        %8d   %5d  %8d\n", or->taxid[j], or->taxCount[j], or->taxBestScore[j]) ;
+  oneReaderDestroy (or) ;
+}
+
+#endif
+
+#ifdef READER_TEST2 // example using threading
+
+// compile with: gcc -DREADER_TEST2 -o dustbin oneread.c ONElib.c merge.c utils.c -lz
+
+typedef struct {
+  OneReader *or ;
+  U64        start, end ;
+  U64        dustBin[101] ;
+} ThreadArg ;
+
+static void *threadProcess (void *arg)
+{
+  ThreadArg *ta = (ThreadArg*)arg ;
+  if (!oneReaderGoto (ta->or, ta->start)) die ("failed oneReaderGoto") ;
+  while (ta->start++ < ta->end && oneReaderNext (ta->or))
+    ++ta->dustBin[(int)(ta->or->dustScore)] ;
+  return 0 ;
+}
+
+int main (int argc, char *argv[])
+{
+  int i, j, n ;
+  --argc ; ++argv ; // skip program name
+  if (argc != 2)
+    die ("usage: dustBin <.1read file> <nThread> // report distribution of dust values") ;
+  int nThread = atoi(argv[1]) ;
+  if (nThread <= 0) die ("second argument %s must be a positive integer", argv[1]) ;
+  OneReader *or = oneReaderCreate (argv[0], nThread) ;
+  if (!or) die ("failed to open .1read file %s", argv[0]) ;
+
+  pthread_t *threads = new (nThread, pthread_t) ;
+  ThreadArg *ta      = new0 (nThread, ThreadArg) ;
+  U64 nRead ; oneReaderStats (or, &nRead, 0, 0, 0, 0) ;
+  if (!nRead) die ("no reads found in file %s", *argv) ;
+  for (i = 0 ; i < nThread ; ++i)
+    { ta[i].or  = or + i ;                     // equivalent to ta[i].or = &or[i]
+      ta[i].start = (nRead * i) / nThread ;
+      ta[i].end = (nRead * (i+1)) / nThread ;
+    }
+  for (i = 0 ; i < nThread ; ++i)              // create threads
+    pthread_create (&threads[i], 0, threadProcess, &ta[i]) ;
+  for (i = 0 ; i < nThread ; ++i)
+    pthread_join (threads[i], 0) ;             // wait for threads to complete
+  newFree (threads, nThread, pthread_t) ;
+
+  // accumulate scores into the 0 level
+  for (i = 1 ; i < nThread ; ++i) for (j = 0 ; j < 101 ; ++j) ta->dustBin[j] += ta[i].dustBin[j] ;
+
+  // find the largest index in the histogram table with data
+  for (n = 101 ; n-- ;) if (ta->dustBin[n]) break ;
+
+  printf ("file %s containing %llu reads has dust score distribution:\n", *argv, nRead) ;
+  for (j = 0 ; j <= n ; ++j)
+    printf ("%d\t%.1f%%\t%llu\n", j, (100.0*ta->dustBin[j])/nRead, ta->dustBin[j]) ;
+
+  newFree (ta, nThread, ThreadArg) ;
+  oneReaderDestroy (or) ;
+}
+#endif
+
+/******* merge1read - merges arbitrarily many 1read files sorted on read name ********/
+// uses Gene Myers merge package twice
+
 #include "merge.h"
 
 typedef struct {
@@ -190,7 +431,7 @@ bool merge1read (char *outfile, int nIn, char **infiles)
   return true ;
 }
 
-/*********************************************************/
+/******** report1read - not really functional/useful yet **********/
 
 bool report1read (char *outFileName, char *readFileName)
 {
@@ -330,5 +571,90 @@ bool report1read (char *outFileName, char *readFileName)
   newFree (scores,256,U64) ;
   return true ;
 }
+
+/******** dust() reimplemented from Chenxi Zhou's reimplementation of published sdust ********/
+// NB my version differs slightly - my window is the number of words (triplets) considered
+//    whereas Chenxi 
+
+static U8 dustMap[256] = {
+	0, 1, 2, 3,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 0, 4, 1,  4, 4, 4, 2,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  3, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 0, 4, 1,  4, 4, 4, 2,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  3, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4, 
+	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
+};
+
+#define WLEN  3			// word length
+#define WTOT  (1<<(WLEN<<1))
+#define WMASK (WTOT - 1)
+
+double dust (const char *seq, int seqLen, int window, int *wCount)
+{
+  static int  lastWindow = 0 ;
+  static int  wCount0[WTOT], *wSeq ;
+
+  if (window < WLEN) die ("dust window %d must be >= word length %d", window, WLEN) ;
+  if (window != lastWindow)
+    { if (lastWindow) newFree (wSeq, lastWindow, int) ;
+      wSeq = new0 (window, int) ;
+      lastWindow = window ;
+    }
+  if (!wCount) wCount = wCount0 ;
+  memset(wCount, 0, WTOT*sizeof(int)) ;
+
+  I64 score = 0, maxScore = 0 ;
+  int i, j, t, n = -WLEN ;
+  for (i = 0 ; i < seqLen ; ++i)
+    { int b = dustMap[(int)seq[i]] ;
+      if (b > 3) continue ; // ignore Ns
+      t = (t << 2 | b) & WMASK ;
+      if (++n >= 0)
+	{ int k = n % window ;
+	  if (n >= window)
+	    { int x = wSeq[k] ;
+	      if (wCount[x]) score -= --wCount[x] ;
+	      score += wCount[t]++ ;
+	      if (score > maxScore) maxScore = score ;
+	    }
+	  else
+	    score += wCount[t]++ ;
+	  wSeq[k] = t ;
+	}
+    }
+  if (n >= window) return (200.0 * maxScore) / (window * (window-1)) ;
+  else return (200.0 * score) / (n * (n+1)) ;
+}
+
+#ifdef DUST_TEST
+
+// compile with gcc -DDUST_TEST -o dust oneread.c seqio.c merge.c utils.c ONElib.c -lz
+
+#include "seqio.h"
+
+int main (int argc, char *argv[])
+{
+  --argc ; ++argv ;
+  if (argc != 2) die ("usage: dust <window> <seqfile>") ;
+  int window = atoi (*argv++) ;
+  SeqIO *sio = seqIOopenRead (*argv, 0, false) ;
+  if (!sio) die ("failed to open sequence file %s", *argv) ;
+  while (seqIOread (sio))
+    printf ("%s\t%d\t%.3f\n",
+	    sqioId(sio), (int)sio->seqLen, dust(sqioSeq(sio), sio->seqLen, window, 0)) ;
+  seqIOclose (sio) ;
+}
+ 
+#endif // DUST_TEST
 
 /********************* end of file ***********************/

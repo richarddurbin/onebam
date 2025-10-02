@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 28 18:03 2025 (rd109)
+ * Last edited: Oct  2 00:20 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -59,12 +59,65 @@ char *derivedName (char *inName, char *tag) ;
 void setCramReference (char *cramRef) ;
 void auxAdd (char *oneCode, char *spec) ;
 bool bam21readSorted (char *bamFileName, char *outFileName, char *accTaxName) ;
-bool bam21bam (char *bamFileName, char *outFileName, char *taxidFileName, bool isNames) ;
+bool bam21bam (char *bamFileName, char *outFileName, char *accTaxFileName, bool isNames) ;
 bool bamMake1read (char *bamOneFileName, char *outFileName) ;
 
 // oneread.c
-bool merge1read (char *outfile, int nIn, char **infiles) ;
-bool report1read (char *readFileName, char *outFileName) ;
+// first the user API for reading .1read files
+
+// the OneReader handle gives access to objects in the file - read-only please
+typedef struct {
+  // properties of the current read, filled by oneReaderNext()
+  int   seqLen ;
+  char *seq ;
+  U8   *qual ;          // 0-based; length seqLen (NB may contain internal 0s - can use str* funcs)
+  int   nameLen ;
+  char *name ;
+  char *namePrefix ;    // initial segment of the name that is shared by all reads in the file
+  char *nameEnd ;       // the segment of the current name after the prefix
+  int   maxScore ;      // the best score (AS field) of any alignment
+  float dustScore ;     // the dust score of this sequence, in range 0 to 100 (max dusty)
+  char *mLine ;         // string containing reference substitutions for an alignment with maxScore
+                        //     length seqLen ; positions matching seq are '.', deletions '-'
+  int   nTax ;          // how many taxids this read has alignments to
+  int  *taxid ;         // list of nTax taxids that have hits from this read
+  int  *taxCount ;      // list of nTax counts of how many hits to the respective taxid
+  int  *taxBestScore ;  // list of nTax best scores for the respective taxid
+  int   lca ;           // NCBI taxid of least common ancestor of taxids hit - NOT YET
+  
+  void *private ;       // a handle for private information for the oneRead code
+} OneReader ;
+
+OneReader *oneReaderCreate (char *fileName, int nThreads) ;
+// returns an array of nThreads OneReader objects; just a simple pointer if nThreads = 1
+
+void oneReaderDestroy (OneReader *or) ;
+// cleans up memory etc.; call on the base pointer (return value of oneReaderCreate)
+
+bool oneReaderNext (OneReader *or) ;
+// moves on to the next read, updating the contents of *or; returns false at end of file
+// call on or+i (or equivalently &or[i] to access the i'th thread if threaded
+
+bool oneReaderGoto (OneReader *or, U64 i) ;
+// goes to the requested read
+// goto 0 places before the first read, like when you have just started - oneReaderNext() to read it
+// goto 1 loads the first read - oneReaderNext() will read the second read, same for following reads
+// call on or+i to access the i'th thread if threaded
+// returns true if successful, false if i < 0 or i > number of reads
+
+void oneReaderStats (OneReader *or,
+		     U64 *nReads,       // number of reads in the file
+		     int *maxSeqLen,    // maximum sequence length
+		     U64 *totSeqLen,    // total sequence length
+		     int *maxNameLen,   // maximum name length
+		     int *maxTax        // max value of nTax ;
+		     ) ;
+// any of the arguments after the first (or) can be 0 (NULL), in which case they won't be filled
+// call on the base pointer if you have a threaded OneReader array
+
+bool   merge1read (char *outfile, int nIn, char **infiles) ;
+bool   report1read (char *readFileName, char *outFileName) ;
+double dust (const char *seq, int seqLen, int window, int *wCount) ;
 
 // MSDsort.c
 void msd_sort (U8 *array, I64 nels, int rsize, int ksize, int depth, int mark, int nthreads) ;
