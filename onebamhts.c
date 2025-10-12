@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct  2 00:17 2025 (rd109)
+ * Last edited: Oct 12 21:38 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -657,11 +657,9 @@ static void write1read (Array oneFileNames, Array bLoc,
     }
 
   if (!arrayMax(bLoc)) die ("write1read() called empty - no BAM records or buffer too small") ;
-
   printf ("entering write1read %d for %d items: ",
 	  (int)arrayMax(oneFileNames), (int)arrayMax(bLoc)) ;
   timeUpdate (stdout) ;
-
   { char c = firstName[minNameShare] ; firstName[minNameShare] = 0 ;
     printf ("  name prefix %s maxNameLen %d\n", firstName, maxNameLen) ;
     firstName[minNameShare] = c ;
@@ -693,7 +691,7 @@ static void write1read (Array oneFileNames, Array bLoc,
 
   // now write them out, in the new sorted order
   // we may have to merge multiple entries for the same read
-  char lastName[256] = "" ;
+  char  lastName[256] = "\n" ;
   I32   maxScore = - (1<<30) ;
   char *mLine = 0 ;
   Array aTx = arrayCreate (1024, TaxInfo) ;
@@ -801,6 +799,10 @@ bool bam21readSorted (char *bamFileName, char *outFileName, char *accTaxFileName
   if (!bf) return false;
   int nTargets = bf->h->n_targets;
   printf("read %d references: ", nTargets); timeUpdate(stdout);
+
+  if (sizeof(Exception) != sizeof(TaxInfo))
+    die ("mismatch sizeof(Exception) %d != sizeof(TaxInfo) %d",
+	 sizeof(Exception), sizeof(TaxInfo)) ;
   
   // deal with targets - first sort them
   int i, *revMap = new(nTargets, int);
@@ -814,7 +816,7 @@ bool bam21readSorted (char *bamFileName, char *outFileName, char *accTaxFileName
     }
   qsort(revMap, nTargets, sizeof(int), accTaxOrder);
   printf ("sorted %d targets total length %lld\n", nTargets, (long long)totTargetName) ;
-
+ 
   // and next map to taxids by merging with acc2taxid information in .1acctax file
   int  *taxid = new0(nTargets+1, int) ;
   OneSchema *schema = oneSchemaCreateFromText(schemaText);
@@ -932,7 +934,7 @@ bool bam21readSorted (char *bamFileName, char *outFileName, char *accTaxFileName
 	      memcpy (bufEnd, mLine, seqLen) ; bufEnd += seqLen ;
 	      
 	      // store taxonomic information
-	      bufEnd = bufPushI32 (bufEnd, arrayMax(aTx)) ;
+	      bufEnd = bufPushI32 (bufEnd, (I32)arrayMax(aTx)) ;
 	      memcpy (bufEnd, arrp(aTx,0,TaxInfo), arrayMax(aTx)*sizeof(TaxInfo)) ;
 	      bufEnd += arrayMax(aTx)*sizeof(TaxInfo) ;
 	    }
@@ -1044,27 +1046,27 @@ bool bam21readSorted (char *bamFileName, char *outFileName, char *accTaxFileName
       U8 *aux;
       if (!(aux = bam_aux_get(bf->b, "AS"))) continue; // skip if no score
       int score = bam_aux2i(aux);
-      if (score > tx->bestScore) tx->bestScore = score;
-    
-      // Check if this is the best alignment for mLine calculation
-      if (score > maxScore)
-	{ maxScore = score;
-	  isMaxReverse = (flag & BAM_FREVERSE) ? true : false;
+      if (score > tx->bestScore)
+	{ tx->bestScore = score;
+	  // Check if this is the best alignment for mLine calculation
+	  if (score > maxScore)
+	    { maxScore = score;
+	      isMaxReverse = (flag & BAM_FREVERSE) ? true : false;
+	      // Store CIGAR
+	      I64 nCigar = bf->b->core.n_cigar;
+	      ENSURE_BUF_SIZE(maxCigar, maxCigarSize, nCigar+1, I32);
+	      memcpy (maxCigar, bam_get_cigar(bf->b), nCigar*sizeof(I32)) ;
+	      maxCigar[nCigar] = 0 ; // use this in generateMline()
 
-	  // Store CIGAR
-	  I64 nCigar = bf->b->core.n_cigar;
-	  ENSURE_BUF_SIZE(maxCigar, maxCigarSize, nCigar+1, I32);
-	  memcpy (maxCigar, bam_get_cigar(bf->b), nCigar*sizeof(I32)) ;
-	  maxCigar[nCigar] = 0 ; // use this in generateMline()
-
-	  // Store MD string
-	  char *s ;
-	  if ((aux = bam_aux_get(bf->b, "MD")) && (s = bam_aux2Z(aux)))
-	    { ENSURE_BUF_SIZE(maxMd, maxMdSize, strlen(s)+1, char);
-	      strcpy(maxMd, s);
+	      // Store MD string
+	      char *s ;
+	      if ((aux = bam_aux_get(bf->b, "MD")) && (s = bam_aux2Z(aux)))
+		{ ENSURE_BUF_SIZE(maxMd, maxMdSize, strlen(s)+1, char);
+		  strcpy(maxMd, s);
+		}
+	      else
+		*maxMd = 0 ;
 	    }
-	  else
-	    *maxMd = 0 ;
 	}
     }
     
@@ -1091,17 +1093,13 @@ bool bam21readSorted (char *bamFileName, char *outFileName, char *accTaxFileName
 	  // store taxonomic information
 	  // if (arrayMax(aTx) > 1) arraySort(aTx, txCompare) ; // don't need, will sort later
 	  bufEnd = bufPushI32 (bufEnd, (I32)arrayMax(aTx)) ;
-	  for (i = 0; i < arrayMax(aTx); ++i)
-	    { TaxInfo *tx = arrp(aTx, i, TaxInfo);
-	      bufEnd = bufPushI32 (bufEnd, tx->txid) ;
-	      bufEnd = bufPushI32 (bufEnd, tx->bestScore) ;
-	      bufEnd = bufPushI32 (bufEnd, tx->count) ;
-	    }
+	  memcpy (bufEnd, arrp(aTx,0,TaxInfo), arrayMax(aTx)*sizeof(TaxInfo)) ;
+	  bufEnd += arrayMax(aTx)*sizeof(TaxInfo) ;
 	}
       write1read (ofNames, bLoc, firstName, minNameShare, maxNameLen) ;
     }
 
-  printf("processed %lld records\n", (long long)nRecord) ;
+  printf ("processed %lld records\n", (long long)nRecord) ;
 
   if (arrayMax(ofNames) == 1) // move it
     rename (arr(ofNames,0,char*), outFileName) ;
