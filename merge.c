@@ -5,7 +5,8 @@
  * Description: implementations of Gene Myers heap merging algorithms
  * Exported functions:
  * HISTORY:
- * Last edited: Sep 10 17:25 2025 (rd109)
+ * Last edited: Oct  6 14:29 2025 (rd109)
+ * * Oct  6 14:27 2025 (rd109): see https://drops.dagstuhl.de/storage/00lipics/lipics-vol259-cpm2023/LIPIcs.CPM.2023.22/LIPIcs.CPM.2023.22.pdf
  * Created: Sat Aug  9 18:05:50 2025 (rd109)
  *-------------------------------------------------------------------
  */
