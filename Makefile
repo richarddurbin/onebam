@@ -40,7 +40,13 @@ onebamhts.o: onebamhts.c onebam.h
 oneread.o: oneread.c onebam.h merge.h
 	$(CC) $(CFLAGS) $(HTS_OPTS) -c $^
 
+onebamtax.o: onebamtax.c onebam.h taxonomy.h
+	$(CC) $(CFLAGS) $(HTS_OPTS) -c $^
+
 seqio.o: seqio.c seqio.h
+	$(CC) $(CFLAGS) $(SEQIO_OPTS) -c $^
+
+taxonomy.o: taxonomy.c taxonomy.h
 	$(CC) $(CFLAGS) $(SEQIO_OPTS) -c $^
 
 MSDsort.o: MSDsort.c gene_core.h
@@ -51,7 +57,7 @@ gene_core.o: gene_core.c gene_core.h
 
 ### programs
 
-onebam: onebam.c onebamhts.o oneread.o seqio.o ONElib.o MSDsort.o gene_core.o $(UTILS_OBJS)
+onebam: onebam.c onebamhts.o oneread.o onebamtax.o taxonomy.o seqio.o ONElib.o MSDsort.o gene_core.o $(UTILS_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(SEQIO_LIBS) $(HTS_LIBS) $(LIBS)
 
 ONEview: ONEview.c ONElib.o
