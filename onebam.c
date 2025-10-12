@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct  2 00:27 2025 (rd109)
+ * Last edited: Oct 12 23:31 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -15,13 +15,8 @@
 // globals
 int        NTHREAD = 8 ;
 
-// routine to convert sequence file to numbers
-static bool numberSeq (char* inName, char *out1seqName, char *outFqName, bool isNames) ;
-
 // reference
-ExternalReference *reference = 0 ;
 static bool makeAccTax (char *refname, char *tsvname) ;
-static bool readReference (char *refname) ;
 
 // extract stem from input filename
 char *derivedName (char *inName, char *tag)
@@ -53,6 +48,18 @@ static char usage[] =
   "      -o <ZZ.report>                   output to named file rather than stdout\n"
   "    makeAccTax <XX.tsv>           convert acc2taxid tab-separated file to .1acctax\n"
   "      -o <ZZ.1acctax>                  output file - default is XX.1acctax for input XX.*\n"
+  "    addLCA <taxdir> <XX.1read>    add LCA and dust information\n"
+  "      -o <ZZ.1read>                    output file - default is to overwrite input\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -scoreThresh <T>                 only include taxa with score above T\n"
+  "      -maxDivergence <M>               maximum divergence, e.g. 0.05 on top of end deamination\n"
+  "    reportLCA <XX.1read>          report aggregated by LCA taxa\n"
+  "      -o <ZZ.tsv>                      output file - default is XX.report\n"
+  "      -dustThresh <D>                  maximum dust score treshold\n"
+  "      -species | -genus | -family      only report taxa at or below the named level\n"
+  "    extract <YY.1read> <XX.1read> extract reads from XX.1read into YY.1read\n"
+  "      -lca <tid>                       extract reads with LCA <tid>\n"
+#ifndef HIDE
   "    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bam\n"
   "      -accTax <YY.1acctax>             file with lines <acc>\\ttaxid\\n sorted on acc\n"
@@ -61,18 +68,12 @@ static char usage[] =
   "         NB you must use '-aux AS:i s -aux MD:Z m' if you plant to use your .1bam to make .1read\n"
   "      -names                           keep sequence names [default to drop names]\n"
   "      -cramref <file_name|URL>         reference for CRAM - needed to read cram\n"
-#ifndef HIDE
   "    1bam21read <XX.1bam>          convert .1bam file to .1read (simplified information per read)\n"
   // no - this is not sorted so not valid
   "      -T <nthreads>                    number of threads [8]\n"
   "      -o <ZZ.1read>                    output file - default is XX.1read for input XX.1bam\n"
   "    1bam2bam <XX.1bam>            back-convert .1bam to .bam\n"
   "      -o <ZZ.bam>                      output file - default is XX.bam for input XX.1bam\n"
-  "    numberSeq <XX.fq[.gz]>        make .1seq file from fq, plus new fq file with ints for names\n"
-  "         NB will read and process fasta[.gz] or BAM/CRAM or even 1seq, as well as fastq[.gz]\n"
-  "      -oSeq <ZZ.1seq>                  .1seq output file - default is XX.1seq for input XX.fq\n"
-  "      -oFq <ZZ-i.fq[.gz]>              .fq output file - default is XX-i.fq.gz for input XX.fq\n"
-  "      -names                           keep sequence names in .1seq [default to drop names]\n"
 #endif
   ;
   
@@ -113,7 +114,7 @@ int main (int argc, char *argv[])
 	if (!strcmp (*argv, "-o") && argc > 1)
 	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
 	else die ("unknown onebam report1read option %s - run without args for usage", *argv) ;
-      if (argc < 1)
+      if (argc != 1)
 	die ("onebam report1read needs one not %d args; run without args for usage", argc) ;
       if (!report1read (outFileName, *argv))
 	die ("failed to generate report from file %s", *argv) ;
@@ -123,11 +124,52 @@ int main (int argc, char *argv[])
 	if (!strcmp (*argv, "-o") && argc > 1)
 	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
 	else die ("unknown onebam makeAccTax option %s - run without args for usage", *argv) ;
-      if (argc < 1)
+      if (argc != 1)
 	die ("onebam makeAccTax needs one not %d args; run without args for usage", argc) ;
       if (!makeAccTax (outFileName, *argv))
 	die ("failed to make .1acctax file from %s", *argv) ;
     }
+  else if (!strcmp (command, "addLCA"))
+    { int scoreThresh = - (1<<30) ;
+      double maxDivergence = 1.0 ;
+      int nThreads = 8 ;
+      while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-T") && argc > 1)
+	  { nThreads = atoi(argv[1]) ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-scoreThresh") && argc > 1)
+	  { scoreThresh = atoi(argv[1]) ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-maxDivergence") && argc > 1)
+	  { maxDivergence = atof(argv[1]) ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam addLCA option %s - run without args for usage", *argv) ;
+      if (argc != 2)
+	die ("onebam addLCA needs two not %d args; run without args for usage", argc) ;
+      if (!addLCA (outFileName, argv[1], argv[0], scoreThresh, maxDivergence, nThreads))
+      	die ("failed to add LCAs to %s using taxonomy in %s", argv[1], argv[0]) ;
+    }
+  else if (!strcmp (command, "reportLCA"))
+    { int dustThresh = 100 ;
+      int level = 0 ;
+      while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-dustThresh") && argc > 1)
+	  { nThreads = atoi(argv[1]) ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-species")) { level = 1 ; ++argv ; --argc ; }
+	else if (!strcmp (*argv, "-genus")) { level = 2 ; ++argv ; --argc ; }
+	else if (!strcmp (*argv, "-family")) { level = 3 ; ++argv ; --argc ; }
+	else die ("unknown onebam reportLCA option %s - run without args for usage", *argv) ;
+      if (argc != 1)
+	die ("onebam reportLCA needs one not %d args; run without args for usage", argc) ;
+      if (!reportLCA (outFileName, dustThresh, level))
+      	die ("failed to report LCAs for %s", *argv) ;
+    }
+  else if (!strcmp (command, "extractLCA"))
+    {
+    }
+  //  "    extract <YY.1read> <XX.1read> extract reads from XX.1read into YY.1read\n"
+  //  "      -lca <tid>                       extract reads with LCA <tid>\n"
   else if (!strcmp (command, "bam21bam"))
     { while (argc && **argv == '-')
 	if (!strcmp (*argv, "-o") && argc > 1)
@@ -155,58 +197,11 @@ int main (int argc, char *argv[])
       if (!bamMake1read (*argv, outFileName))
 	die ("failed to convert .1bam file %s to .1read", *argv) ;
     }
-  else if (!strcmp (command, "numberSeq"))
-    { char *outFqName = 0 ;
-      while (argc && **argv == '-')
-	if (!strcmp (*argv, "-oSeq") && argc > 1)
-	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else if (!strcmp (*argv, "-oFq") && argc > 1)
-	  { outFqName = argv[1] ; argv += 2 ; argc -= 2 ; }
-	else if (!strcmp (*argv, "-names"))
-	  { isNames = true ; ++argv ; --argc ; }
-	else die ("unknown onebam numberSeq option %s - run without args for usage", *argv) ;
-      if (argc != 1) die ("onebam numberSeq needs 1 not %d args; run without args for usage", argc) ;
-      if (!numberSeq (*argv, outFileName, outFqName, isNames))
-	die ("failed to convert sequence file to .1seq and numbered .fq.gz files") ;
-    }
   else
     die ("unknown onebam command %s - run without arguments for usage", command) ;
 
   fprintf (stderr, "Total: ") ; timeTotal (stderr) ;
   exit (0) ;
-}
-
-/************************ numberSeq ***********************************/
-
-#include "seqio.h"
-
-static bool numberSeq (char* inName, char *out1seqName, char *outFqName, bool isNames)
-{
-  SeqIO *siIn = seqIOopenRead (inName, 0, true) ;
-  if (!siIn) return false ;
-  
-  if (!outFqName) outFqName = derivedName (inName, "fqn.gz") ;
-  SeqIO *siOut = seqIOopenWrite (outFqName, FASTQ, 0, 1) ;
-  if (!siOut) { seqIOclose (siIn) ; return false ; }
-
-  if (!out1seqName) out1seqName = derivedName (inName, "1seq") ;
-  SeqIO *siSeq = seqIOopenWrite (out1seqName, ONE, 0, 1) ;
-  if (!siSeq) { seqIOclose (siIn) ; seqIOclose (siOut) ; return false ; }
-
-  I64  nSeq = 0, tot = 0 ;
-  char ibuf[16] ;
-  while (seqIOread (siIn))
-    { sprintf (ibuf, "%lld", (long long) ++nSeq) ; // NB the increment here of nSeq
-      seqIOwrite (siOut, ibuf, 0, siIn->seqLen, sqioSeq(siIn), sqioQual(siIn)) ;
-      seqIOwrite (siSeq, isNames?sqioId(siIn):0, 0, siIn->seqLen, sqioSeq(siIn), sqioQual(siIn)) ;
-      tot += siIn->seqLen ;
-    }
-
-  seqIOclose (siIn) ;
-  seqIOclose (siOut) ;
-  seqIOclose (siSeq) ;
-  fprintf (stderr, "processed %lld sequences total length %lld\n", (long long) nSeq, (long long) tot) ;
-  return true ;
 }
 
 /*********************** reference package *****************************/
@@ -400,73 +395,6 @@ static bool makeAccTax (char *accTaxName, char *tsvName)
     }
 
   oneFileClose (of) ;
-  return true ;
-}
-/********** threaded code to read in the reference ************/
-
-// *** THIS CODE IS OUT OF DATE ***
-
-typedef struct {
-  OneFile   *of ;
-  ExternalReference *ref ;
-  I64        start, end ;
-} RefReadThread ;
-
-static void *readRefThread (void *arg)
-{
-  RefReadThread *ti = (RefReadThread*) arg ;
-
-  oneReadLine (ti->of) ;
-  while (ti->start <= ti->end)
-    { ti->ref->len[ti->start] = oneInt(ti->of,0) ;
-      ti->ref->taxid[ti->start] = (I32) oneInt(ti->of,1) ;
-      ++ti->start ;
-      oneReadLine (ti->of) ;
-      if (ti->of->lineType != 'I')
-	{ 
-	}
-      if (ti->of->lineType != 'A') die ("read failure at readRef %lld", (long long)ti->start) ;
-    }
-  return 0 ;
-}
-
-static bool readReference (char *fname)
-{
-  OneSchema *schema = oneSchemaCreateFromText (schemaText) ;
-  OneFile *of = oneFileOpenRead (fname, schema, "ref", NTHREAD) ;
-  if (!of) return false ;
-
-  fprintf (stderr, "opened oneFile: ") ; timeUpdate (stderr) ;
-
-  reference = new (1, ExternalReference) ;
-  I64 max, total ;
-  oneStats (of, 'A', &reference->n, &max, &total) ;
-  reference->len = new (reference->n, I64) ;
-  reference->taxid = new (reference->n, I32) ;
-  oneStats (of, 'I', &reference->nAcc, 0, &reference->fixBufSize) ;
-  reference->acc = new (reference->nAcc, Accession) ;
-  reference->fixBuf = new (reference->fixBufSize, char) ;
-
-  pthread_t     *threads = new (NTHREAD, pthread_t) ;
-  RefReadThread *ti = new0 (NTHREAD, RefReadThread) ;
-  int i ;
-  for (i = 0 ; i < NTHREAD ; ++i)
-    { ti[i].ref = reference ;
-      ti[i].of = of + i ;
-      ti[i].start = 1 + (reference->n * i) / NTHREAD ;
-      ti[i].end = (reference->n * (i+1)) / NTHREAD ;
-      oneGoto (ti[i].of, 'A', ti->start) ;
-    }
-  for (i = 0 ; i < NTHREAD ; ++i) // create threads
-    pthread_create (&threads[i], 0, readRefThread, &ti[i]) ;
-  for (i = 0 ; i < NTHREAD ; ++i)
-    pthread_join (threads[i], 0) ; // wait for threads to complete
-  newFree (threads, NTHREAD, pthread_t) ;
-  newFree (ti, NTHREAD, RefReadThread) ;
-  
-  oneFileClose (of) ;
-  fprintf (stderr,"read reference %s with %lld accessions: ", fname, (long long) reference->n) ;
-  timeUpdate (stderr) ;
   return true ;
 }
 

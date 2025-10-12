@@ -5,19 +5,20 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Oct  1 23:36 2025 (rd109)
+ * Last edited: Oct 12 23:09 2025 (rd109)
  * * Sep 30 04:08 2025 (rd109): added oneReader package, and dust()
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
  */
 
 #include "onebam.h"
+#include "seqio.h"  // for acgtCheck()
 
 /********* OneReader API **********/
 
 typedef struct {
   int      nThreads ;
-  OneFile *of ;
+  OneFile *ofIn, *ofOut ;
   int      prefixLen ;
   int      wCount[64] ; // for dust calculation
 } OneReaderPrivate ;
@@ -33,12 +34,13 @@ OneReader *oneReaderCreate (char *fileName, int nThreads)
   OneReaderPrivate *op = new0 (nThreads, OneReaderPrivate) ;
   or->private = (void*) op ;
   op->nThreads = nThreads ;
-  op->of = of ;
+  op->ofIn = of ;
   
-  if (oneGoto (of, 'O', 1) && oneReadLine (of))
+  if (oneGoto (of, 'P', 1) && oneReadLine (of))
     { or->namePrefix = oneString (of) ;
       op->prefixLen = oneLen (of) ;
     }
+  
   if (!oneReadLine (of) || of->lineType != 'S')
     { oneGoto (of, 'S', 1)  ; oneReadLine (of) ; }
 
@@ -50,15 +52,15 @@ OneReader *oneReaderCreate (char *fileName, int nThreads)
     { OneReader *ori = &or[i] ;
       ori->name = new0 (maxNameLen+1, char) ;
       if (op->prefixLen) strcpy (ori->name, or->namePrefix) ; // namePrefix is fixed and shared
-      ori->taxid = new (maxTax, int) ;
+      ori->taxid = new (maxTax, TaxID) ;
       ori->taxCount = new (maxTax, int) ;
       ori->taxBestScore = new (maxTax, int) ;
       if (i > 0)
 	{ OneReaderPrivate *opi = op + i ;
 	  ori->private = (void*) opi ;
-	  opi->of = of + i ;
+	  opi->ofIn = of + i ;
 	  opi->prefixLen = op->prefixLen ;
-	  oneGoto (opi->of, 'S', 1) ; oneReadLine (opi->of) ; // sets up at start of first sequence
+	  oneGoto (opi->ofIn, 'S', 1) ; oneReadLine (opi->ofIn) ; // sets up at start of first sequence
 	}
     }
 
@@ -66,7 +68,7 @@ OneReader *oneReaderCreate (char *fileName, int nThreads)
 }
 
 bool oneReaderGoto (OneReader *or, U64 i)
-{ OneFile *of = ((OneReaderPrivate*)or->private)->of ;
+{ OneFile *of = ((OneReaderPrivate*)or->private)->ofIn ;
   if (i < 0) return false ;
   else if (i == 0) return oneGoto (of, 'S', 1) && oneReadLine (of) ;
   else if (oneGoto (of, 'S', i) && oneReadLine (of) && oneReaderNext (or)) return true ;
@@ -80,17 +82,17 @@ void oneReaderStats (OneReader *or,
 		     int *maxNameLen,   // maximum name length
 		     int *maxTax)       // max value of nTaxid
 { if (!or || !or->private) return ;
-  OneFile *of = ((OneReaderPrivate*)or->private)->of ;
+  OneFile *of = ((OneReaderPrivate*)or->private)->ofIn ;
   I64 a, b, c ;
   if (nReads || maxSeqLen || totSeqLen)
     { oneStats (of, 'S', &a, &b, &c) ;
-      if (nReads) *nReads = (U64) a ;
+      if (nReads)    *nReads = (U64) a ;
       if (maxSeqLen) *maxSeqLen = (int) b ;
       if (totSeqLen) *totSeqLen = (U64) c ;
     }
   if (maxNameLen)
     { oneStats (of, 'I', 0, &a, 0) ;
-      *maxNameLen = (int) a ;
+      *maxNameLen  = (int) a ;
       *maxNameLen += ((OneReaderPrivate*)or->private)->prefixLen ;
     }
   if (maxTax)
@@ -102,12 +104,12 @@ void oneReaderStats (OneReader *or,
 bool oneReaderNext (OneReader *or)
 {
   OneReaderPrivate *op = (OneReaderPrivate*)or->private ;
-  OneFile *of = op->of ;
+  OneFile *of = op->ofIn ;
   if (of->lineType != 'S') { printf ("**lineType %c\n", of->lineType) ; return false ; }
   or->seqLen = oneLen(of) ;
   or->seq = oneDNAchar(of) ; // NB we use the ONElib 'S' buffer
-  or->dustScore = dust (or->seq, or->seqLen, 64, op->wCount) ;
   or->nTax = 0 ;
+  or->dustScore = 0 ;
   while (oneReadLine (of) && of->lineType != 'S')
     switch (of->lineType)
       {
@@ -120,6 +122,12 @@ bool oneReaderNext (OneReader *or)
 	{ int i = oneInt(of,0) ; char c = oneChar(of,1) ; int n = oneInt(of,2) ;
 	  while (n--) or->seq[i++] = c ;
 	}
+	break ;
+      case 'D':
+	or->dustScore = oneInt(of,0) ;
+	break ;
+      case 'L':
+	or->lca = oneInt(of,0) ;
 	break ;
       case 'Q': // NB we are using and overwriting the ONElib 'Q' buffer - OK
 	or->qual = (U8*)oneString(of) ;
@@ -139,13 +147,62 @@ bool oneReaderNext (OneReader *or)
 	die ("unknown linetype %c at line %lld sequence %d in .1read file %s",
 	     of->lineType, of->line, oneObject(of,'S'), oneFileName (of)) ;
       }
+  if (!or->dustScore) or->dustScore = (int)(0.5 + dust (or->seq, or->seqLen, 64, op->wCount)) ;
   return true ;
 }
 
-void oneReaderDestroy (OneReader *or)
-{ if (!or) return ;
+bool oneReaderWriteFile (OneReader *or, const char *outFileName)
+{
   OneReaderPrivate *op = (OneReaderPrivate*)or->private ;
-  OneFile *of = op->of ; // cache because we will free private
+  if (!(op->ofOut = oneFileOpenWriteFrom (outFileName, op->ofIn, true, op->nThreads)))
+    return false ;
+  // need to change to binary, and to copy across the provenance
+  oneAddProvenance (op->ofOut, "OneReader", VERSION, getCommandLine()) ;
+  oneWriteLine (op->ofOut, 'P', strlen(or->namePrefix), or->namePrefix) ;
+  int i ;
+  for (i = 1 ; i < op->nThreads ; ++i) op[i].ofOut = op->ofOut + i ;
+  return true ;
+}
+
+void oneReaderWrite (OneReader *or)
+{
+  OneFile *of = ((OneReaderPrivate*)or->private)->ofOut ;
+  oneWriteLine (of, 'S', or->seqLen, or->seq) ;
+  oneWriteLine (of, 'I', strlen(or->nameEnd), or->nameEnd) ;
+  int i ;
+  for (i = 0 ; i < or->seqLen ; ++i) // write exceptions for non-ACGT characters
+    if (!acgtCheck[(int)or->seq[i]])
+      { oneInt(of,0) = i ;
+	char c = oneChar(of,1) = or->seq[i] ;
+	I64 n = 1 ; while (++i < or->seqLen && or->seq[i] == c) n++ ; oneInt(of,2) = n ;
+	oneWriteLine (of, 'N', 0, 0) ;
+      }
+  if (or->qual)
+    { for (i = 0 ; i < or->seqLen ; ++i) or->qual[i] += 33 ;
+      oneWriteLine (of, 'Q', or->seqLen, or->qual) ;
+      for (i = 0 ; i < or->seqLen ; ++i) or->qual[i] -= 33 ;
+    }
+  if (or->dustScore) { oneInt(of,0) = or->dustScore ; oneWriteLine (of, 'D', 0, 0) ; }
+  if (or->lca) { oneInt(of,0) = or->lca ; oneWriteLine (of, 'L', 0, 0) ; }
+  oneInt(of,0) = or->maxScore ; oneWriteLine (of, 'M', or->seqLen, or->mLine) ;
+  for (i = 0 ; i < or->nTax ; ++i)
+    { oneInt(of,0) = or->taxid[i] ;
+      oneInt(of,1) = or->taxBestScore[i] ;
+      oneInt(of,2) = or->taxCount[i] ;
+      oneWriteLine (of, 'T', 0, 0) ;
+    }
+}
+
+void oneReaderWriteTx (OneReader *or, Taxonomy *tx, bool *txUsed)
+{
+  OneReaderPrivate *op = (OneReaderPrivate*)or->private ;
+  taxonomyWrite (tx, op->ofOut+op->nThreads-1, txUsed) ; // LAST thread's handle for end of file
+}
+
+void oneReaderDestroy (OneReader *or)
+{
+  if (!or) return ;
+  OneReaderPrivate *op = (OneReaderPrivate*)or->private ;
   int nThreads = op->nThreads ;
 
   int maxSeqLen, maxNameLen, maxTax ;
@@ -160,14 +217,15 @@ void oneReaderDestroy (OneReader *or)
       newFree (ori->taxBestScore, maxTax, int) ;
     }
 
-  oneFileClose (of) ; // closing the master closes all the slaves and releases line buffers
+  oneFileClose (op->ofIn) ; // closing the master closes all the slaves and releases line buffers
+  oneFileClose (op->ofOut) ;
   newFree (op, nThreads, OneReaderPrivate) ;
   newFree (or, nThreads, OneReader) ;
 }
 
 #ifdef READER_TEST1 // simple example
 
-// compile with: gcc -DREADER_TEST1 -o reader oneread.c ONElib.c merge.c utils.c -lz
+// compile with: gcc -DREADER_TEST1 -o reader oneread.c taxonomy.c ONElib.c merge.c seqio.c array.c dict.c utils.c -lz
 
 int main (int argc, char *argv[])
 {
@@ -179,7 +237,7 @@ int main (int argc, char *argv[])
   if (i <= 0) die ("second argument %s must be a positive integer", *argv) ;
   if (!oneReaderGoto (or, i)) die ("failed to locate to %llu", (long long unsigned)i) ;
   printf ("read %llu %s seqLen %d seq %s\n", (long long unsigned)i, or->name, or->seqLen, or->seq) ;
-  printf ("maxScore %d dustScore %.1f mLine %s\n", or->maxScore, or->dustScore, or->mLine) ;
+  printf ("maxScore %d dustScore %d mLine %s\n", or->maxScore, or->dustScore, or->mLine) ;
   printf   ("nTax %3d taxid   count  bestScore\n", or->nTax) ;
   int j ;
   for (j = 0 ; j < or->nTax ; ++j)
@@ -191,7 +249,7 @@ int main (int argc, char *argv[])
 
 #ifdef READER_TEST2 // example using threading
 
-// compile with: gcc -DREADER_TEST2 -o dustbin oneread.c ONElib.c merge.c utils.c -lz
+// compile with: gcc -DREADER_TEST2 -o dustbin oneread.c taxonomy.c ONElib.c merge.c seqio.c array.c dict.c utils.c -lz
 
 typedef struct {
   OneReader *or ;
@@ -420,6 +478,7 @@ bool merge1read (char *outfile, int nIn, char **infiles)
   printf (" into %s with %lld S lines and %lld T lines\n",
 	  oneFileName(ofOut), (long long)nSout, (long long)nTout) ;
 
+  for (i = 0 ; i < nIn ; ++i) oneFileClose (inputs[i].of) ;
   oneFileClose (ofOut) ;
 
   mergeDestroy (readMerge) ;
