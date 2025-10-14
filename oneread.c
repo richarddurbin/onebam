@@ -5,7 +5,7 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 12 23:09 2025 (rd109)
+ * Last edited: Oct 14 01:41 2025 (rd109)
  * * Sep 30 04:08 2025 (rd109): added oneReader package, and dust()
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
@@ -40,6 +40,8 @@ OneReader *oneReaderCreate (char *fileName, int nThreads)
     { or->namePrefix = oneString (of) ;
       op->prefixLen = oneLen (of) ;
     }
+
+  or->taxonomy = taxonomyRead (of) ;
   
   if (!oneReadLine (of) || of->lineType != 'S')
     { oneGoto (of, 'S', 1)  ; oneReadLine (of) ; }
@@ -105,12 +107,13 @@ bool oneReaderNext (OneReader *or)
 {
   OneReaderPrivate *op = (OneReaderPrivate*)or->private ;
   OneFile *of = op->ofIn ;
+  if (!of->lineType || of->lineType == 'U') return false ; // at end of file or reads
   if (of->lineType != 'S') { printf ("**lineType %c\n", of->lineType) ; return false ; }
   or->seqLen = oneLen(of) ;
   or->seq = oneDNAchar(of) ; // NB we use the ONElib 'S' buffer
   or->nTax = 0 ;
   or->dustScore = 0 ;
-  while (oneReadLine (of) && of->lineType != 'S')
+  while (oneReadLine (of) && of->lineType != 'S' && of->lineType != 'U')
     switch (of->lineType)
       {
       case 'I':
@@ -218,7 +221,7 @@ void oneReaderDestroy (OneReader *or)
     }
 
   oneFileClose (op->ofIn) ; // closing the master closes all the slaves and releases line buffers
-  oneFileClose (op->ofOut) ;
+  if (op->ofOut) oneFileClose (op->ofOut) ;
   newFree (op, nThreads, OneReaderPrivate) ;
   newFree (or, nThreads, OneReader) ;
 }
@@ -306,6 +309,37 @@ int main (int argc, char *argv[])
   oneReaderDestroy (or) ;
 }
 #endif
+
+/*************************************************************************/
+
+bool extractReads (char *inFileName, char *outFileName, TaxID lca)
+{
+  if (!lca) die ("extractReads can only extract based on LCA for now") ;
+  
+  OneReader *or = oneReaderCreate (inFileName, 1) ;
+  if (!or) { warn ("failed to open .1read file %s", inFileName) ; return false ; }
+  if (!outFileName)
+    { int k = 0 ; while (inFileName[k] && inFileName[k] != '.') ++k ;
+      inFileName[k] = 0 ;
+      outFileName = new0 (k + 24, char) ;
+      sprintf (outFileName, "%s-%d.1read", inFileName, lca) ;
+    }
+  if (!oneReaderWriteFile (or, outFileName))
+    { warn ("failed to open .1read file %s to write to", outFileName) ; return false ; }
+
+  int nIn = 0, nOut = 0 ;
+  while (oneReaderNext (or))
+    { ++nIn ;
+      if (or->lca == lca)
+	{ ++nOut ;
+	  oneReaderWrite (or) ;
+	}
+    }
+  oneReaderDestroy (or) ;
+
+  printf ("extracted %d reads into %s from %d in %s\n", nOut, outFileName, nIn, inFileName) ;
+  return true ;
+}
 
 /******* merge1read - merges arbitrarily many 1read files sorted on read name ********/
 // uses Gene Myers merge package twice

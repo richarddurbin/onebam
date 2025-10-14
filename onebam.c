@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 12 23:31 2025 (rd109)
+ * Last edited: Oct 14 01:36 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -56,8 +56,9 @@ static char usage[] =
   "    reportLCA <XX.1read>          report aggregated by LCA taxa\n"
   "      -o <ZZ.tsv>                      output file - default is XX.report\n"
   "      -dustThresh <D>                  maximum dust score treshold\n"
+  "      -taxDir <taxdir>               should not be needed - only if not already in .1read\n"
   "      -species | -genus | -family      only report taxa at or below the named level\n"
-  "    extract <YY.1read> <XX.1read> extract reads from XX.1read into YY.1read\n"
+  "    extractReads <YY.1read> <XX.1read> extract reads from XX.1read into YY.1read\n"
   "      -lca <tid>                       extract reads with LCA <tid>\n"
 #ifndef HIDE
   "    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam\n"
@@ -149,27 +150,38 @@ int main (int argc, char *argv[])
       	die ("failed to add LCAs to %s using taxonomy in %s", argv[1], argv[0]) ;
     }
   else if (!strcmp (command, "reportLCA"))
-    { int dustThresh = 100 ;
-      int level = 0 ;
+    { int   dustThresh = 100 ;
+      int   level = 0 ;
+      char *taxDir = 0 ;
       while (argc && **argv == '-')
 	if (!strcmp (*argv, "-o") && argc > 1)
 	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
 	else if (!strcmp (*argv, "-dustThresh") && argc > 1)
-	  { nThreads = atoi(argv[1]) ; argv += 2 ; argc -= 2 ; }
+	  { dustThresh = atoi(argv[1]) ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-taxDir") && argc > 1)
+	  { taxDir = argv[1] ; argv += 2 ; argc -= 2 ; }
 	else if (!strcmp (*argv, "-species")) { level = 1 ; ++argv ; --argc ; }
 	else if (!strcmp (*argv, "-genus")) { level = 2 ; ++argv ; --argc ; }
 	else if (!strcmp (*argv, "-family")) { level = 3 ; ++argv ; --argc ; }
 	else die ("unknown onebam reportLCA option %s - run without args for usage", *argv) ;
       if (argc != 1)
 	die ("onebam reportLCA needs one not %d args; run without args for usage", argc) ;
-      if (!reportLCA (outFileName, dustThresh, level))
+      if (!reportLCA (argv[0], outFileName, taxDir, dustThresh, level))
       	die ("failed to report LCAs for %s", *argv) ;
     }
-  else if (!strcmp (command, "extractLCA"))
-    {
+  else if (!strcmp (command, "extractReads"))
+    { int lca = 0 ;
+      while (argc && **argv == '-')
+	if (!strcmp (*argv, "-o") && argc > 1)
+	  { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+	else if (!strcmp (*argv, "-lca") && argc > 1)
+	  { lca = atoi(argv[1]) ; argv += 2 ; argc -= 2 ; }
+	else die ("unknown onebam extractReads option %s - run without args for usage", *argv) ;
+      if (argc != 1)
+	die ("onebam extractReads needs one not %d args; run without args for usage", argc) ;
+      if (!extractReads (argv[0], outFileName, lca))
+      	die ("failed to extract reads from %s", *argv) ;
     }
-  //  "    extract <YY.1read> <XX.1read> extract reads from XX.1read into YY.1read\n"
-  //  "      -lca <tid>                       extract reads with LCA <tid>\n"
   else if (!strcmp (command, "bam21bam"))
     { while (argc && **argv == '-')
 	if (!strcmp (*argv, "-o") && argc > 1)

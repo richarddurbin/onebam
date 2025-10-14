@@ -5,7 +5,7 @@
  * Description: read NCBI taxonomy *.dmp and provide services
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 12 22:16 2025 (rd109)
+ * Last edited: Oct 13 23:52 2025 (rd109)
  * Created: Fri Oct  3 08:00:43 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -75,7 +75,7 @@ static void readFiles (Taxonomy *tx, const char *path)
   char **fields ;
   U32    k ;
     
-  if (!(f = openDmpFile (path, "nodes"))) die ("failed to open nodes.dmp file") ;
+  if (!(f = openDmpFile (path, "nodes"))) die ("failed to open nodes.dmp file at %s", path) ;
   while ((fields = parseLine (f, 13)))
     { TaxID txid = atoi(fields[0]) ;
       TaxNode *node = arrayp(tx->nodes, txid, TaxNode) ;
@@ -92,14 +92,14 @@ static void readFiles (Taxonomy *tx, const char *path)
     }
   fclose (f) ;
 		  
-  if (!(f = openDmpFile (path, "names"))) die ("failed to open names.dmp file") ;
+  if (!(f = openDmpFile (path, "names"))) die ("failed to open names.dmp file at %s", path) ;
   char buf[32] ;
   while ((fields = parseLine (f, 4)))
     if (!strcmp (fields[3], "scientific name"))
       { TaxID txid = atoi(fields[0]) ;
 	if (txid < dictMax(tx->nameDict)) die ("names out of order") ;
 	while (dictMax(tx->nameDict) < txid)
-	  { sprintf (buf, "z%d\n", dictMax(tx->nameDict)) ;
+	  { sprintf (buf, "z%d", dictMax(tx->nameDict)) ;
 	    dictAdd (tx->nameDict, buf, &k) ;
 	  }
 	if (*fields[2])
@@ -283,19 +283,16 @@ bool taxonomyWrite (Taxonomy *tx, OneFile *of, bool *txUsed)
 			    "O V 1 6 STRING\n"))                 // taxonomy rank
     return false ;
 
-  int      i ;
-  TaxID    t ;
+  TaxID    i, t ;
   TaxNode *x ;
 
   // first build the list of taxids to write - need parental path to the root
   bool *txInclude = new0 (arrayMax(tx->nodes), bool) ;
   for (i = 0 ; i < arrayMax(tx->nodes) ; ++i)
     if (txUsed[i])
-      for (t = i ; !txInclude[t] ; t = x->parent)
+      for (t = i ; !txInclude[t] ; t = x->parent) // will break at root whose parent is self
 	{ txInclude[t] = true ;
-	  x = arrp(tx->nodes,i,TaxNode) ;
-	  if (x->parent == t) // at the root
-	    break ;
+	  x = arrp(tx->nodes,t,TaxNode) ;
 	}
 
   // now write the data for these taxids
@@ -332,7 +329,7 @@ Taxonomy *taxonomyRead (OneFile *of)
       if (txid < dictMax(tx->nameDict)) die ("names out of order") ;
       U32 k ;
       while (dictMax(tx->nameDict) < txid)
-	{ sprintf (buf, "z%d\n", dictMax(tx->nameDict)) ;
+	{ sprintf (buf, "z%d", dictMax(tx->nameDict)) ;
 	  dictAdd (tx->nameDict, buf, &k) ;
 	}
       dictAdd (tx->nameDict, oneString(of), &k) ;

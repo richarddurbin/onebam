@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 11 11:14 2025 (rd109)
+ * Last edited: Oct 14 01:26 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -39,6 +39,7 @@ typedef struct {
   int   *taxCount ;      // list of nTax counts of how many hits to the respective taxid
   int   *taxBestScore ;  // list of nTax best scores for the respective taxid
   int    lca ;           // NCBI taxid of least common ancestor of taxids hit
+  Taxonomy *taxonomy ;   // contained taxonomy
   
   void *private ;       // a handle for private information for the oneRead code
 } OneReader ;
@@ -134,13 +135,15 @@ bool bam21bam (char *bamFileName, char *outFileName, char *accTaxFileName, bool 
 bool bamMake1read (char *bamOneFileName, char *outFileName) ;
 
 // oneread.c
-bool   merge1read (char *outfile, int nIn, char **infiles) ;
-bool   report1read (char *readFileName, char *outFileName) ;
+bool extractReads (char *inFileName, char *outFileName, TaxID lca) ;
+bool merge1read (char *outfile, int nIn, char **infiles) ;
+bool report1read (char *readFileName, char *outFileName) ;
 double dust (const char *seq, int seqLen, int window, int *wCount) ;
 
 // onebamtax.c
 bool addLCA (char *outFileName, char *inFileName, char *taxPath,
 	     int scoreThresh, double maxDivergence, int nThreads) ;
+bool reportLCA (char *readFileName, char *outFileName, char *taxDir, int dustThresh, int level) ;
 
 // MSDsort.c
 void msd_sort (U8 *array, I64 nels, int rsize, int ksize, int depth, int mark, int nthreads) ;
