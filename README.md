@@ -29,7 +29,7 @@ Now onebam:
 github clone https://github.com/richarddurbin/onebam.git
 cd onebam
 make
-make install
+make install   # by default installs in ~/bin - to put elsewhere "make DESTDIR=<target> install"
 ```
 
 ###Command line arguments/options
@@ -47,24 +47,31 @@ Usage: onebam <command> <options>* <args>*
       -o <ZZ.report>                   output to named file rather than stdout
     makeAccTax <XX.accession2taxid[.gz]>   convert acc2taxid tab-separated file to .1acctax
       -o <ZZ.1acctax>                  output file - default is XX.1acctax for input XX.*
-    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam
-      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bam
-      -accTax <YY.1accTax>             file with lines <acc>\ttaxid\n sorted on acc
-         NB you must give taxids if you plan to use your .1bam to make .1read
-      -aux <tag>:<fmt> <char>          record BAM tag with OneCode <char>, e.g. -aux AS:i s
-         NB you must use '-aux AS:i s -aux MD:Z m' if you plant to use your .1bam to make .1read
-      -names                           keep sequence names [default to drop names]
-      -cramref <file_name|URL>         reference for CRAM - needed to read cram
+    addLCA <taxdir> <XX.1read>    add LowestCommonAncestor and dust information
+      -o <ZZ.1read>                    output file - default is to overwrite input
+      -T <nthreads>                    number of threads [8]
+    reportLCA <XX.1read>          report aggregated by LCA
+      -o <ZZ.tsv>                      tab-separated output file - default is XX.reportLCA
+      -rank <taxonomic rank>           aggregate to and report at named rank, e.g. genus, family
+      -group <top level tax group>     restrict to group, eg animals, plants, fungi, bacteria
+    extractReads <XX.1read>       extract reads from XX.1read
+      -o <ZZ.1read>                    output file - default is XX-<lca>.1read      
+      -lca <lca>                       extract reads with LCA at or below lca<tid>
 ```
 
 ###Synopsis
 
 ```
 onebam makeAccTax -o reference.1acctax reference.accession2taxid.gz
-for file in *.bam; do                           # this can be naturally parallelised
+for file in *.bam; do                           #  naturally parallelisable on a cluster
     onebam bam21read reference.1acctax $file    #  makes *.1read
 done
 onebam merge1read -o merged.1read *.1read       #  merge individual bam files
+onebam addLCA ../NCBI-taxonomy/ merged.1read    #  adds the LCA and taxonomy to merged.1read file
+onebam reportLCA -rank family merged.1read      #  writes out report collated at family level
+sed 's/\t/,/g' merged.reportLCA | sort -t , -k4nr | column -s , -t  #  pretty prints report
+onebam extractReads -lca 3688 merged.1read      #  extract reads with LCA Salicacae (taxid 3688)
+seqconvert -fa merged-3688.1read                #  convert reads to fasta (or -fq for fastq)
 ```
 
 You can view/convert to ASCII the contents of any ONEfile with `ONEview`. Execute this without arguments to see options.  Useful versions are `ONEview -H xx.1read` to see just the header, `ONEview -h xx.1read` to see just the data, and `ONEview -i S 5 xx.1read` to output just the 5th read (reads are sequence objects designated by the `S` onecode).
@@ -121,7 +128,8 @@ typedef struct {
   int  *taxid ;         // list of nTax taxids that have hits from this read
   int  *taxCount ;      // list of nTax counts of how many hits to the respective taxid
   int  *taxBestScore ;  // list of nTax best scores for the respective taxid
-  int   lca ;           // NCBI taxid of least common ancestor of taxids hit - NOT YET
+  int   lca ;           // NCBI taxid of least common ancestor of taxids hit, after addLCA
+  Taxonomy *taxonomy ;  // taxonomy subset for taxids in this file, after addLCA
   
   void *private ;       // a handle for private information for the oneRead code
 } OneReader ;
@@ -217,4 +225,4 @@ int main (int argc, char *argv[])
 
 ---
 
-Richard Durbin 1/10/2025
+Richard Durbin 15/10/2025
