@@ -5,7 +5,7 @@
  * Description: implementations of Gene Myers heap merging algorithms
  * Exported functions:
  * HISTORY:
- * Last edited: Oct  6 14:29 2025 (rd109)
+ * Last edited: Oct 15 12:09 2025 (rd109)
  * * Oct  6 14:29 2025 (rd109): see https://drops.dagstuhl.de/storage/00lipics/lipics-vol259-cpm2023/LIPIcs.CPM.2023.22/LIPIcs.CPM.2023.22.pdf
  * * Aug 10 11:51 2025 (rd109): see TEST in merge.c for example usage
  * Created: Sat Aug  9 23:19:03 2025 (rd109)
@@ -27,6 +27,10 @@ void   mergeRecreate (Merge *m, int T, void *arg) ; // reset using existing allo
 // the puropose of mergeRecreate is to allow lightweight use for many merges of small sets
 int    mergeNext (Merge *m, int **tList) ; // returns number of items with next smallest value
                                            // *tList contains a list of the input indices
+bool   mergeUpdateString (Merge *m, int t, char *sNew) ;
+// this allows the user to move the location of the last yielded string for stream t to sNew
+// if the string contents at the new and old location are the same it accepts and returns true 
+// if they are different it returns false and does not update - strdup your string first!
 
 // see TEST code at end of merge.c for example usage
 

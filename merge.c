@@ -5,7 +5,7 @@
  * Description: implementations of Gene Myers heap merging algorithms
  * Exported functions:
  * HISTORY:
- * Last edited: Oct  6 14:29 2025 (rd109)
+ * Last edited: Oct 16 00:40 2025 (rd109)
  * * Oct  6 14:27 2025 (rd109): see https://drops.dagstuhl.de/storage/00lipics/lipics-vol259-cpm2023/LIPIcs.CPM.2023.22/LIPIcs.CPM.2023.22.pdf
  * Created: Sat Aug  9 18:05:50 2025 (rd109)
  *-------------------------------------------------------------------
@@ -367,6 +367,14 @@ int mergeNext (Merge *m, int **tList) // returns the number of entries in m->G, 
   if (tList) *tList = m->HG ;
   // printf ("  leaving mergeNext\n") ;
   return m->nG ;
+}
+
+bool mergeUpdateString (Merge *m, int t, char *sNew)
+{
+  char *sOld = m->S[t+1] ;
+  if (strcmp (sOld, sNew)) return false ;
+  m->S[t+1] = sNew ; // all the offsets etc. will still work, we believe!
+  return true ;
 }
 
 /************************* test packages ************************/
