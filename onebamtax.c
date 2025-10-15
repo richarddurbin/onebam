@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 14 01:06 2025 (rd109)
+ * Last edited: Oct 16 00:26 2025 (rd109)
  * * Oct  7 17:07 2025 (rd109): 
  * Created: Tue Oct  7 17:06:32 2025 (rd109)
  *-------------------------------------------------------------------
@@ -98,11 +98,14 @@ bool addLCA (char *outFileName, char *inFileName, char *taxPath,
   return true ;
 }
 
+/*********************** reporting *************************/
+
 typedef struct {
   int      n ;
   TaxID    txid ;
   I64      dustSum ;
   I64      totLen ;
+  I64      scoreSum ;
   int      nACGT[5] ; 		// reference base count: use 4 for all non-ACGT
   int      nC1, nC1toT ;	// reference C in position 1, C->T in position 1
   int      counts[1<<14] ;
@@ -110,25 +113,43 @@ typedef struct {
 
 #include <math.h>
 
-bool reportLCA (char *readFileName, char *outFileName, char *taxDir, int dustThresh, int level)
+bool reportLCA (char *readFileName, char *outFileName, char *rankText, char *groupText)
 {
   OneReader *or = oneReaderCreate (readFileName, 1) ;
-  if (!or) { warn ("failed to open .1read file %s", readFileName) ; return false ; }
+  if (!or) die ("failed to open .1read file %s", readFileName) ;
   Taxonomy *tax = or->taxonomy ;
-  if (taxDir) tax = taxonomyFromNCBIfiles (taxDir) ;
-  //  if (!tax)
-  //    { if (taxDir)
-  //	 tax = taxonomyFromNCBIfiles (taxDir) ;
-  //      else
-  //	{ warn ("missing taxonomy information; use -taxDir option") ;
-  //	  oneReaderDestroy (or) ;
-  //	  return false ;
-  //	}
-  //    }
+  if (!tax) die ("missing taxonomy - you must run addLCA first before reportLCA\n") ;
   if (!outFileName) outFileName = derivedName (readFileName, "reportLCA") ;
   FILE *out = fopen (outFileName, "w") ;
   if (!out) die ("failed to open output file %s", outFileName) ;
 
+  TaxID *rankID = 0 ;
+  if (rankText)
+    { U32 rank ;
+      if (!dictFind (tax->rankDict, rankText, &rank))
+	die ("unrecognised taxonomic rank %s", rankText) ;
+      rankID = new0 (arrayMax(tax->nodes), TaxID) ;
+      TaxID    t = tax->root ;
+      TaxNode *x ;
+      while (true)
+	{ x = arrp(tax->nodes, t, TaxNode) ;
+	  rankID[t] = (x->rank == rank) ? t : rankID[x->parent] ; // inherit if not at rank
+	  // now recurse
+	  if (x->left)
+	    t = x->left ; // next level down
+	  else            // go right (next) or up (parent) then right
+	    { while (!x->next && t != tax->root)
+		{ t = x->parent ; x = arrp(tax->nodes, t, TaxNode) ; }
+	      if (t == tax->root) break ; // we are done - leave main loop
+	      t = x->next ;
+	    }
+	}
+    }
+
+  U32 group = 0 ;
+  if (groupText && !dictFind (tax->groupDict, groupText, &group))
+    die ("group %s not one of animals, plants, fungi, bacteria, archaea", groupText) ;
+  
   Hash  taxHash = hashCreate (4096) ;
   Array stats   = arrayCreate (4096, ReportStats) ;
 
@@ -150,14 +171,18 @@ bool reportLCA (char *readFileName, char *outFileName, char *taxDir, int dustThr
 
   int mask = (1<<14) - 1 ;
   while (oneReaderNext (or))
-    { if (!or->lca) continue ;
+    { TaxID txid = or->lca ;
+      if (rankID) txid = rankID[txid] ;
+      if (!txid) continue ;
+      if (group && arrp(tax->nodes, txid, TaxNode)->group != group) continue ;
       int k ;
-      hashAdd (taxHash, hashInt(or->lca), &k) ;
+      hashAdd (taxHash, hashInt(txid), &k) ;
       ReportStats *rs = arrayp(stats, k, ReportStats) ;
       ++rs->n ;
-      rs->txid = or->lca ;
+      rs->txid = txid ; // only needed the first time, but faster to set than test
       rs->totLen += or->seqLen ;
       rs->dustSum += or->dustScore ;
+      rs->scoreSum += or->maxScore ;
       if (*or->mLine == 'C' || (*or->mLine == '.' && *or->seq == 'c')) ++rs->nC1 ;
       if (*or->mLine == 'C' && *or->seq == 't') ++rs->nC1toT ;
       k = 0 ;
@@ -169,8 +194,11 @@ bool reportLCA (char *readFileName, char *outFileName, char *taxDir, int dustThr
 	}
     }
   hashDestroy (taxHash) ;
+  if (rankID) newFree (rankID, arrayMax(tax->nodes), TaxID) ;
   oneReaderDestroy (or) ;
 
+  fprintf (out, "#tax_id\ttax_name\ttax_rank\tcount\t") ;
+  fprintf (out, "av_len\tav_score\tav_dust\tav_GC\t5'CtoT\tHscore\tfamily\n") ;
   for (i = 0 ; i < arrayMax(stats) ; ++i)
     { ReportStats *rs = arrp(stats,i,ReportStats) ;
       TaxNode *tx = arrp(tax->nodes, rs->txid, TaxNode) ;
@@ -179,7 +207,8 @@ bool reportLCA (char *readFileName, char *outFileName, char *taxDir, int dustThr
       fprintf (out, "%s\t", dictName (tax->rankDict, tx->rank)) ;
       fprintf (out, "%d\t", rs->n) ;
       fprintf (out, "%.1f\t", rs->totLen / (1.0*rs->n)) ;
-      fprintf (out, "%.1f\t", rs->dustSum / (1.0*rs->n)) ;
+      fprintf (out, "%.1f\t", rs->scoreSum / (1.0*rs->n)) ;
+      fprintf (out, "%.2f\t", rs->dustSum / (1.0*rs->n)) ;
       fprintf (out, "%.3f\t", (rs->nACGT[1]+rs->nACGT[2]) /
 	       (1.0*(rs->nACGT[0]+rs->nACGT[1]+rs->nACGT[2]+rs->nACGT[3]))) ;
       fprintf (out, "%.2f %d/%d\t", rs->nC1?rs->nC1toT/(1.0*rs->nC1):0.0, rs->nC1toT, rs->nC1) ;
@@ -196,9 +225,7 @@ bool reportLCA (char *readFileName, char *outFileName, char *taxDir, int dustThr
       if (sum > 1<<16) fprintf (out, "%3d\t", (int)(1000*(log2(sum) - info/sum)/13)) ;
       else if (sum) fprintf (out, "%3d\t", (int)(1000*(log2small[sum] - info/sum)/13)) ;
       else fprintf (out, "0.00\t") ;
-      fprintf (out, "%s\t", tx->family ? dictName (tax->nameDict, tx->family) : "-") ;
-      fprintf (out, "%s\t", tx->genus ? dictName (tax->nameDict, tx->genus) : "-") ;
-      fprintf (out, "%s\n", tx->species ? dictName (tax->nameDict, tx->species) : "-") ;
+      fprintf (out, "%s\n", tx->family ? dictName (tax->nameDict, tx->family) : "-") ;
     }
   arrayDestroy (stats) ;
   fclose (out) ;
@@ -206,4 +233,6 @@ bool reportLCA (char *readFileName, char *outFileName, char *taxDir, int dustThr
 }
 
 // sed -e 's/\t/,/g' ERR10493337.reportLCA | sort -t , -k4nr | column -s , -t | less -S
+// cat Z3.reportLCA | sed -e 's/\t/,/g' | awk 'BEGIN{FS=","}($4 > 10)' | sort -t , -k8nr | column -s , -t | less -S
+
 

@@ -5,7 +5,7 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 14 01:41 2025 (rd109)
+ * Last edited: Oct 16 00:35 2025 (rd109)
  * * Sep 30 04:08 2025 (rd109): added oneReader package, and dust()
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
@@ -327,10 +327,28 @@ bool extractReads (char *inFileName, char *outFileName, TaxID lca)
   if (!oneReaderWriteFile (or, outFileName))
     { warn ("failed to open .1read file %s to write to", outFileName) ; return false ; }
 
+  Taxonomy *tax = or->taxonomy ;
+  if (!tax) die ("you must have run addLCA before you can extractReads for now") ;
+  bool *isExtract = new0 (arrayMax(tax->nodes), bool) ;
+  TaxID    t = lca ;
+  TaxNode *x ;
+  while (true)
+    { x = arrp(tax->nodes, t, TaxNode) ;
+      isExtract[t] = true ;
+      // now recurse
+      if (x->left)
+	t = x->left ; // next level down
+      else            // go right (next) or up (parent) then right
+	{ while (t != lca && !x->next) { t = x->parent ; x = arrp(tax->nodes, t, TaxNode) ; }
+	  if (t == lca) break ; // we are done - leave main loop
+	  t = x->next ;
+	}
+    }
+  
   int nIn = 0, nOut = 0 ;
   while (oneReaderNext (or))
     { ++nIn ;
-      if (or->lca == lca)
+      if (isExtract[or->lca])
 	{ ++nOut ;
 	  oneReaderWrite (or) ;
 	}

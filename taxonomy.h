@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 12 12:30 2025 (rd109)
+ * Last edited: Oct 15 21:17 2025 (rd109)
  * Created: Tue Oct  7 12:08:08 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -17,23 +17,27 @@
 
 typedef I32 TaxID ;     // need to be able to store -1
 
+typedef enum { NONE, ANIMALS, PLANTS, FUNGI, BACTERIA, ARCHAEA } TaxGroup ;
+
 typedef struct {
   int   nTx ;
   Array nodes ;         // of TaxNode - index is the TaxID
   DICT *nameDict ;      // node names
   DICT *rankDict ;
   DICT *divisionDict ;
+  DICT *groupDict ;
   TaxID root ;
 } Taxonomy ;
 
 typedef struct {
-  TaxID parent ;
-  U8    rank ;
-  U8    division ;
-  U8    geneticCode ;            // we could make dicts for the codes, but for now we don't use them
-  U8    mitochondrialCode ;
-  TaxID left, next ;             // for traversal
-  TaxID species, genus, family ; // corresponding values, or 0 if rank is above
+  TaxID    parent ;
+  U8       rank ;
+  U8       division ;
+  U8       geneticCode ;     // we could make dicts for the codes, but for now we don't use them
+  U8       mitochondrialCode ;
+  TaxID    left, next ;             // for traversal
+  TaxID    family ; // corresponding family, or 0 if rank is above
+  TaxGroup group ;
 } TaxNode ;
 
 // next data structure is working space for finding LCAs - require an object to make threadsafe

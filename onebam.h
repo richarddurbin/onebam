@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 14 01:26 2025 (rd109)
+ * Last edited: Oct 15 22:39 2025 (rd109)
  * Created: Wed Jul  2 10:18:52 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -143,7 +143,7 @@ double dust (const char *seq, int seqLen, int window, int *wCount) ;
 // onebamtax.c
 bool addLCA (char *outFileName, char *inFileName, char *taxPath,
 	     int scoreThresh, double maxDivergence, int nThreads) ;
-bool reportLCA (char *readFileName, char *outFileName, char *taxDir, int dustThresh, int level) ;
+bool reportLCA (char *readFileName, char *outFileName, char *rank, char *group) ;
 
 // MSDsort.c
 void msd_sort (U8 *array, I64 nels, int rsize, int ksize, int depth, int mark, int nthreads) ;

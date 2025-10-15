@@ -5,7 +5,7 @@
  * Description: read NCBI taxonomy *.dmp and provide services
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 13 23:52 2025 (rd109)
+ * Last edited: Oct 15 22:07 2025 (rd109)
  * Created: Fri Oct  3 08:00:43 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -137,63 +137,52 @@ static void buildTraversal (Taxonomy *tx) // fill left and next
   newFree (last, arrayMax(tx->nodes), TaxID) ;
 }
 
-static void makeSpeciesGenusFamily (Taxonomy *tx)
+static inline void groupAssign (Taxonomy *tx, char *name, TaxGroup tg)
 {
-  TaxID s = 0, g = 0, f = 0 ;
-  U32   species, genus, family, phylum, kingdom ;
-  if (!dictFind (tx->rankDict, "species", &species)) die ("failed to find rank species") ;
-  if (!dictFind (tx->rankDict, "genus", &genus)) die ("failed to find rank genus") ;
+  U32 t ;
+  if (dictFind (tx->nameDict, name, &t)) arrp(tx->nodes, t, TaxNode)->group = tg ;
+}
+
+static void annotate (Taxonomy *tx)
+{
+  TaxID fam = 0 ;
+  U32   family ;
   if (!dictFind (tx->rankDict, "family", &family)) die ("failed to find rank family") ;
+
+  TaxGroup group = 0 ;
+  tx->groupDict = dictCreate(32) ;
+  dictAdd (tx->groupDict, "none", 0) ;     
+  dictAdd (tx->groupDict, "animals", 0) ;  groupAssign (tx, "Metazoa", ANIMALS) ;
+  dictAdd (tx->groupDict, "plants", 0) ;   groupAssign (tx, "Embryophyta", PLANTS) ;
+  dictAdd (tx->groupDict, "fungi", 0) ;    groupAssign (tx, "Fungi", FUNGI) ;
+  dictAdd (tx->groupDict, "bacteria", 0) ; groupAssign (tx, "Bacteria <bacteria>", BACTERIA) ;
+  dictAdd (tx->groupDict, "archaea", 0) ;  groupAssign (tx, "Archaea", ARCHAEA) ;
 
   // strategy is to recurse through the tree, left (down) first
   TaxNode *x ;
   TaxID t = tx->root ;
   while (true)
     { x = arrp(tx->nodes, t, TaxNode) ;
-      if (x->rank == species) s = t ;
-      else if (x->rank == genus) g = t ;
-      else if (x->rank == family) f = t ;
-      x->species = s ; x->genus = g ; x->family = f ;
+      if (x->rank == family) fam = t ;
+      x->family = fam ;
+      if (!x->group) x->group = arrp(tx->nodes, x->parent, TaxNode)->group ;
       if (x->left) // next level down (left) - inherit current state
 	t = x->left ;
       else         // go right (next) or up
-	{ if (x->rank == species) s = 0 ;
-	  if (x->rank == genus) g = 0 ;
-	  if (x->rank == family) f = 0 ;
+	{ if (x->rank == family) fam = 0 ;
 	  if (x->next)
 	    t = x->next ;
 	  else
 	    { while (t != tx->root) // at the root
 		{ t = x->parent ;
 		  x = arrp(tx->nodes, t, TaxNode) ;
-		  if (x->rank == species) s = 0 ;
-		  if (x->rank == genus) g = 0 ;
-		  if (x->rank == family) f = 0 ;
+		  if (x->rank == family) fam = 0 ;
 		  if (x->next) { t = x->next ; break ; }
 		}
 	    }
 	}
       if (t == tx->root) break ;
     }
-}
-
-static void orderRanks (Taxonomy *tx)
-{
-  int nRank = dictMax(tx->rankDict) ;
-  int i, **links = new0 (nRank, int*) ;
-  for (i = 0 ; i < nRank ; ++i) links[i] = new0(nRank, int) ;
-
-  // build the parent link matrix
-  TaxID t ;
-  for (t = 0 ; t < arrayMax(tx->nodes) ; ++t)
-    { TaxNode *x = arrp(tx->nodes, t, TaxNode) ;
-      if (x->parent) ++links[t][x->parent] ;
-    }
-
-  // incomplete - maybe we don't need that
-  
-  for (i = 0 ; i < nRank ; ++i) newFree (links[i], nRank, int) ;
-  newFree (links, nRank, int*) ;
 }
 
 Taxonomy *taxonomyCreate (void)
@@ -210,7 +199,7 @@ Taxonomy *taxonomyFromNCBIfiles (const char *path)
   Taxonomy *tx = taxonomyCreate () ;
   readFiles (tx, path) ;
   buildTraversal (tx) ;
-  makeSpeciesGenusFamily (tx) ;
+  annotate (tx) ;
   return tx ;
 }
 
@@ -340,7 +329,7 @@ Taxonomy *taxonomyRead (OneFile *of)
       dictAdd (tx->rankDict, oneString (of), 0) ;
   
   buildTraversal (tx) ;
-  makeSpeciesGenusFamily (tx) ;
+  annotate (tx) ;
 
   return tx ;
 }
@@ -349,7 +338,7 @@ Taxonomy *taxonomyRead (OneFile *of)
 
 #ifdef TAX_TEST
 
-// compile with: gcc -DTAX_TEST -o taxtest taxonomy.c array.c dict.c utils.c -lz
+// compile with: gcc -DTAX_TEST -o taxtest taxonomy.c ONElib.c array.c dict.c utils.c -lz
 
 int main (int argc, char *argv[])
 {
