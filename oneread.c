@@ -5,7 +5,7 @@
  * Description: onebam functionality involving .1read files
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 16 00:35 2025 (rd109)
+ * Last edited: Oct 22 00:29 2025 (rd109)
  * * Sep 30 04:08 2025 (rd109): added oneReader package, and dust()
  * Created: Wed Aug 13 14:10:49 2025 (rd109)
  *-------------------------------------------------------------------
@@ -530,7 +530,7 @@ bool merge1read (char *outfile, int nIn, char **infiles)
   printf (" into %s with %lld S lines and %lld T lines\n",
 	  oneFileName(ofOut), (long long)nSout, (long long)nTout) ;
 
-  for (i = 0 ; i < nIn ; ++i) oneFileClose (inputs[i].of) ;
+  //  for (i = 0 ; i < nIn ; ++i) oneFileClose (inputs[i].of) ;
   oneFileClose (ofOut) ;
 
   mergeDestroy (readMerge) ;

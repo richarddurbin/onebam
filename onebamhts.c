@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 12 21:38 2025 (rd109)
+ * Last edited: Oct 22 00:30 2025 (rd109)
  * Created: Wed Jul  2 13:39:53 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -867,7 +867,7 @@ bool bam21readSorted (char *bamFileName, char *outFileName, char *accTaxFileName
   Array ofNames  = arrayCreate (16, char*) ;
 
   // buffer in which we will accumulate the objects as we process them, then sort when full
-  I64   maxBuf   = (I64)1 << 32 ;
+  I64   maxBuf   = (I64)1 << 31 ;
   U8   *bufStart = new (maxBuf, U8) ;
   U8   *bufEnd   = bufStart ;
   Array bLoc     = arrayCreate (maxBuf>>7, U8*) ; // start of each object
