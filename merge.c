@@ -5,7 +5,7 @@
  * Description: implementations of Gene Myers heap merging algorithms
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 16 00:40 2025 (rd109)
+ * Last edited: Oct 23 12:57 2025 (rd109)
  * * Oct  6 14:27 2025 (rd109): see https://drops.dagstuhl.de/storage/00lipics/lipics-vol259-cpm2023/LIPIcs.CPM.2023.22/LIPIcs.CPM.2023.22.pdf
  * Created: Sat Aug  9 18:05:50 2025 (rd109)
  *-------------------------------------------------------------------
@@ -322,9 +322,15 @@ void mergeRecreate (Merge *m, int T, void *arg)
 void mergeDestroy (Merge *m)
 {
   newFree (m->H, m->Tmax+1, int) ;
-  if (m->V) newFree (m->V, m->Tmax+1, I32) ;
-  newFree (m->L, m->Tmax+1, bool) ;
-  newFree (m->R, m->Tmax+1, bool) ;
+  if (m->V)
+    { newFree (m->V, m->Tmax+1, I32) ;
+      newFree (m->L, m->Tmax+1, bool) ;
+      newFree (m->R, m->Tmax+1, bool) ;
+    }
+  else
+    { newFree (m->S, m->Tmax+1, char*) ;
+      newFree (m->P, m->Tmax+1, int) ;
+    }
   newFree (m->G, m->Tmax, int) ;
   newFree (m->HG, m->Tmax, int) ;
   newFree (m, 1, Merge) ;
@@ -380,6 +386,8 @@ bool mergeUpdateString (Merge *m, int t, char *sNew)
 /************************* test packages ************************/
 
 #ifdef TEST_I32
+
+// compile with gcc -D TEST_I32 -o mergeI32 merge.c utils.c -lz
 
 typedef struct {
   int   T ;   // number of lists
@@ -445,6 +453,8 @@ int main (int argc, char *argv[])
 #endif
 
 #ifdef TEST_STRING
+
+// compile with gcc -D TEST_STRING -o mergeString merge.c utils.c -lz
 
 typedef struct {
   int     T ;   // number of lists

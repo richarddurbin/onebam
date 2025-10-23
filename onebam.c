@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 16 00:37 2025 (rd109)
+ * Last edited: Oct 23 12:52 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -402,6 +402,7 @@ static bool makeAccTax (char *accTaxName, char *tsvName)
     }
 
   oneFileClose (of) ;
+  destroyCommandLine () ;
   return true ;
 }
 
