@@ -5,7 +5,7 @@
  * Description: includes standard system headers and own headers
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 19 05:03 2024 (rd109)
+ * Last edited: Oct 23 12:53 2025 (rd109)
  * Created: Wed Jan  5 16:13:48 2011 (rd)
  *-------------------------------------------------------------------
  */
@@ -55,6 +55,7 @@ void  myfree   (void* x, size_t size) ;
 
 void  storeCommandLine (int argc, char *argv[]) ;
 char *getCommandLine (void) ;
+void destroyCommandLine (void) ;
 
 char *fgetword (FILE *f) ;	/* not threadsafe */
 FILE *fzopen (const char* path, const char* mode) ; /* will open gzip files silently */

@@ -5,7 +5,7 @@
  * Description: core utility functions
  * Exported functions:
  * HISTORY:
- * Last edited: Jul  7 19:23 2025 (rd109)
+ * Last edited: Oct 23 12:53 2025 (rd109)
  * * Feb 22 14:52 2019 (rd109): added fzopen()
  * Created: Thu Aug 15 18:32:26 1996 (rd)
  *-------------------------------------------------------------------
@@ -57,6 +57,8 @@ void storeCommandLine (int argc, char **argv)
 }
 
 char *getCommandLine (void) { return commandLine ; }
+
+void destroyCommandLine (void) { if (commandLine) free (commandLine) ; }
 
 static unsigned long totalAllocated = 0 ;
 static unsigned long maxAllocated = 0 ;
