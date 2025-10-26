@@ -1,0 +1,6 @@
+[submodule "external/htslib"]
+	path = external/htslib
+	url = https://github.com/samtools/htslib.git
+[submodule "external/zstd"]
+	path = external/zstd
+	url = https://github.com/facebook/zstd
