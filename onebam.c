@@ -5,7 +5,7 @@
  * Description:
  * Exported functions:
  * HISTORY:
- * Last edited: Oct 23 12:52 2025 (rd109)
+ * Last edited: Oct 16 00:37 2025 (rd109)
  * Created: Wed Jul  2 10:18:19 2025 (rd109)
  *-------------------------------------------------------------------
  */
@@ -60,6 +60,13 @@ static char usage[] =
   "    extractReads <XX.1read>       extract reads from XX.1read\n"
   "      -o <ZZ.1read>                    output file - default is XX-<lca>.1read\n"
   "      -lca <lca>                       extract reads with LCA at or below <lca>\n"
+  "    bamsort [*.bam|*.sam]+        sort BAM/SAM file by query name (ASCII)\n"
+  "      -o <ZZ.bam>                      output file - default is XX.[sorted|merged].bam for input XX.bam\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -m <maxMem>                      maximum memory per thread; suffix K/M/G recognized [768M]\n"
+  "      -M                               merge only - input files must be presorted\n"
+  "      -zstOutput                       output ZSTD-compressed file\n"
+  "      -noTrimHeader                    do not trim header\n"
 #ifndef HIDE
   "    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bam\n"
@@ -204,9 +211,41 @@ int main (int argc, char *argv[])
       if (!bamMake1read (*argv, outFileName))
 	die ("failed to convert .1bam file %s to .1read", *argv) ;
     }
+  else if (!strcmp (command, "bamsort"))
+    { size_t max_mem = 0 ;
+      bool noTrimHeader = false ;
+      bool zstOutput = false ;
+      bool mergeOnly = false ;
+      while (argc && **argv == '-')
+  if (!strcmp (*argv, "-o") && argc > 1)
+          { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+  else if (!strcmp (*argv, "-m") && argc > 1)
+    { char *q;
+      max_mem = strtol(argv[1], &q, 0) ;
+      if (*q == 'k' || *q == 'K') max_mem <<= 10 ;
+      else if (*q == 'm' || *q == 'M') max_mem <<= 20 ;
+      else if (*q == 'g' || *q == 'G') max_mem <<= 30 ;
+      argv += 2 ; argc -= 2 ;
+    }
+  else if (!strcmp (*argv, "-T") && argc > 1)
+          { NTHREAD = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
+  else if (!strcmp (*argv, "-M"))
+    { mergeOnly = true ; ++argv ; --argc ; }
+  else if (!strcmp (*argv, "-noTrimHeader"))
+    { noTrimHeader = true ; ++argv ; --argc ; }
+  else if (!strcmp (*argv, "-zstOutput"))
+    { zstOutput = true ; ++argv ; --argc ; }
+  else die ("unknown onebam bamsort option %s - run without args for usage", *argv) ;
+      if (argc < 1)
+        die ("onebam bamsort needs at least 1 args; run without args for usage") ;
+      if (!bamsort (argv, argc, outFileName, max_mem, NTHREAD, noTrimHeader, zstOutput, mergeOnly))
+        die ("failed to sort bam file %s", *argv) ;
+    }
   else
     die ("unknown onebam command %s - run without arguments for usage", command) ;
-
+  
+  destroyCommandLine () ;
+  
   fprintf (stderr, "Total: ") ; timeTotal (stderr) ;
   exit (0) ;
 }
@@ -402,7 +441,6 @@ static bool makeAccTax (char *accTaxName, char *tsvName)
     }
 
   oneFileClose (of) ;
-  destroyCommandLine () ;
   return true ;
 }
 
