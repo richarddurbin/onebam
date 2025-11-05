@@ -13,7 +13,7 @@
 #include "onebam.h"
 
 // globals
-int        NTHREAD = 8 ;
+int NTHREAD = 8 ;
 
 // reference
 static bool makeAccTax (char *refname, char *tsvname) ;
@@ -46,7 +46,7 @@ static char usage[] =
   "      -o <ZZ.1read>                    output file - default is 'combined.1read'\n"
   "    report1read <XX.1read>        report on contents of .1read file // needs more work...\n"
   "      -o <ZZ.report>                   output to named file rather than stdout\n"
-  "    makeAccTax <XX.tsv>           convert acc2taxid tab-separated file to .1acctax\n"
+  "    makeAccTax <XX.tsv[.gz]>      convert acc2taxid tab-separated file to .1acctax\n"
   "      -o <ZZ.1acctax>                  output file - default is XX.1acctax for input XX.*\n"
   "    addLCA <taxdir> <XX.1read>    add LowestCommonAncestor and dust information\n"
   "      -o <ZZ.1read>                    output file - default is to overwrite input\n"
