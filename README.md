@@ -32,7 +32,7 @@ Usage: onebam <command> <options>* <args>*
       -o <ZZ.1read>                    output file - default is 'combined.1read'
     report1read <XX.1read>        report on contents of .1read file // needs more work...
       -o <ZZ.report>                   output to named file rather than stdout
-    makeAccTax <XX.tsv>           convert acc2taxid tab-separated file to .1acctax
+    makeAccTax <XX.tsv[.gz]>      convert acc2taxid tab-separated file to .1acctax
       -o <ZZ.1acctax>                  output file - default is XX.1acctax for input XX.*
     addLCA <taxdir> <XX.1read>    add LowestCommonAncestor and dust information
       -o <ZZ.1read>                    output file - default is to overwrite input
