@@ -2442,7 +2442,7 @@ bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threa
     pthread_cond_init(&WCOND,NULL);
 
     // set output file format
-    name_len = strlen(TEMPDIR) + strlen(outfile) + 64;
+    name_len = strlen(TEMPDIR) + 64;
     fn_template = (char *) malloc(name_len);
     if (!fn_template) {
         errmsg("file name buffer allocation failed");
@@ -2468,7 +2468,7 @@ bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threa
     }
     for (i = 0; i < nIn; i++) {
         infomsg("sorting input file [%d/%d]: %s", i+1, nIn, infiles[i]);
-        snprintf(fn_template, name_len, "%s/%s.%.6d.XXXXXX", TEMPDIR, outfile, i+1);
+        snprintf(fn_template, name_len, "%s/onebam_bamsort.%.6d.XXXXXX", TEMPDIR, i+1);
         if (!bamsort1(infiles[i], fn_template, trim, multi_in, bio_data, 
             srt_data+i, refseqs, in_mem_check, zst_writer, zst_merge)) {
             errmsg("failed to sort input file: %s", infiles[i]);
