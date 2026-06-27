@@ -27,12 +27,100 @@
 #include "kseq.h"
 #include "khash.h"
 #include "kstring.h"
+#include "pthread.h"
 #include "thread_pool.h"
-
-#include "onebam.h"
 #include "merge.h"
 
 #define PROGRAM "bamsort"
+
+#ifdef BAMSORT_MAIN
+#define VERSION "1.1"
+static const char *program = PROGRAM ;
+
+static char usage[] =
+  "\n"
+  "Sort BAM/SAM file by query name (ASCII)\n"
+  "Version: " VERSION "\n"
+  "Usage: bamsort <options> [*.bam|*.sam]+\n\n"
+  "      -o <out.bam>                     output file - default is input.[sorted|merged].bam for input input.bam\n"
+  "      -T <nthreads>                    number of threads [8]\n"
+  "      -m <maxMem>                      maximum memory per thread; suffix K/M/G recognized [768M]\n"
+  "      -M                               merge only - input files must be presorted\n"
+  "      -P <tempDir>                     temporary directory for sort files [.]\n"
+  "      -zstOutput                       output ZSTD-compressed file\n"
+  "      -noTrimHeader                    do not trim header\n"
+  "\n";
+  
+bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads, 
+    bool noTrimHeader, bool zstOutput, char *tempDir, bool mergeOnly);
+
+int main (int argc, char *argv[])
+{
+  timeUpdate (0) ;
+  storeCommandLine (argc, argv) ;
+  argc-- ; ++argv ;
+  if (!argc) { fprintf (stderr, "%s", usage) ; exit (0) ; }
+
+  char *outFileName = 0 ;
+  size_t max_mem = 0 ;
+  int  nthread = 8 ;
+  bool noTrimHeader = false ;
+  bool zstOutput = false ;
+  bool mergeOnly = false ;
+  char *tempDir = "." ;
+  while (argc && **argv == '-')
+  if (!strcmp (*argv, "-o") && argc > 1)
+    { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
+  else if (!strcmp (*argv, "-m") && argc > 1)
+    { char *q;
+      max_mem = strtol(argv[1], &q, 0) ;
+      if (*q == 'k' || *q == 'K') max_mem <<= 10 ;
+      else if (*q == 'm' || *q == 'M') max_mem <<= 20 ;
+      else if (*q == 'g' || *q == 'G') max_mem <<= 30 ;
+      argv += 2 ; argc -= 2 ;
+    }
+  else if (!strcmp (*argv, "-T") && argc > 1)
+    { nthread = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
+  else if (!strcmp (*argv, "-P") && argc > 1)
+    { tempDir = argv[1] ; argv += 2 ; argc -= 2 ; }
+  else if (!strcmp (*argv, "-M"))
+    { mergeOnly = true ; ++argv ; --argc ; }
+  else if (!strcmp (*argv, "-noTrimHeader"))
+    { noTrimHeader = true ; ++argv ; --argc ; }
+  else if (!strcmp (*argv, "-zstOutput"))
+    { zstOutput = true ; ++argv ; --argc ; }
+  else die ("unknown bamsort option %s - run without args for usage", *argv) ;
+  
+  if (argc < 1)
+    die ("bamsort needs at least 1 args; run without args for usage") ;
+  if (!bamsort (argv, argc, outFileName, max_mem, nthread, noTrimHeader, zstOutput, tempDir, mergeOnly))
+    die ("failed to sort bam file %s", *argv) ;
+    
+  destroyCommandLine () ;
+
+  fprintf (stderr, "Total: ") ; timeTotal (stderr) ;
+  exit (0) ;
+}
+
+// extract stem from input filename
+static char *derivedName (char *inName, char *tag)
+{
+  int   nameLen = strlen(inName) ;
+  char *stem = new (nameLen+1, char) ;
+  strcpy (stem, inName) ;
+  char *s = stem + nameLen ;
+  if (s - stem > 3 && !strcmp (s-3, ".gz")) { s = s-3 ; *s = 0 ; }
+  while (s > stem)
+    if (*--s == '.') { *s = 0 ; break ; }
+    else if (*s == '/') break ; // just add the tag
+  char *ret = fnameTag(stem,tag) ;
+  newFree (stem, nameLen+1, char) ;
+  return ret ;
+}
+#else
+#include "onebam.h"
+static const char *program = "onebam" ;
+#endif
 
 static char *TEMPDIR = ".";
 
@@ -2314,7 +2402,7 @@ bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threa
     refseq_builder_t *refseqs = NULL;
     struct stat st;
     size_t name_len, max_mem2, max_rec2, tot_mem, n_recs;
-    char *fn_template = NULL;
+    char *fn_template = NULL, *basename = NULL;
     FILE *fn_out = NULL;
     bool ret = false, derived = false, bam_ok = true;
     bool trim = !noTrimHeader;
@@ -2389,6 +2477,11 @@ bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threa
             goto err;
         }
     }
+
+    // basename of output file for temporary files
+    basename = strrchr(outfile, '/');
+    if (basename) basename++;
+    else basename = outfile;
 
     // allocate memory for sorting
     S_THREADS = N_THREADS;
@@ -2468,7 +2561,7 @@ bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threa
     }
     for (i = 0; i < nIn; i++) {
         infomsg("sorting input file [%d/%d]: %s", i+1, nIn, infiles[i]);
-        snprintf(fn_template, name_len, "%s/%s.%.6d.XXXXXX", TEMPDIR, outfile, i+1);
+        snprintf(fn_template, name_len, "%s/%s.%.6d.XXXXXX", TEMPDIR, basename, i+1);
         if (!bamsort1(infiles[i], fn_template, trim, multi_in, bio_data, 
             srt_data+i, refseqs, in_mem_check, zst_writer, zst_merge)) {
             errmsg("failed to sort input file: %s", infiles[i]);
@@ -2535,7 +2628,7 @@ bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threa
             }
         }
     }
-    if (sam_hdr_lite_add_pg(header, "onebam", VERSION, getCommandLine()) < 0) {
+    if (sam_hdr_lite_add_pg(header, program, VERSION, getCommandLine()) < 0) {
         errmsg("failed to add PG line to SAM header");
         goto err;
     }
@@ -2876,7 +2969,7 @@ bool mergebam(char **infiles, int nIn, char *outfile, size_t max_mem, int n_thre
             srt_data[i].header = NULL;
         }
     }
-    if (sam_hdr_lite_add_pg(builder, "onebam", VERSION, getCommandLine()) < 0) {
+    if (sam_hdr_lite_add_pg(builder, program, VERSION, getCommandLine()) < 0) {
         errmsg("failed to add PG line to SAM header");
         goto err;
     }

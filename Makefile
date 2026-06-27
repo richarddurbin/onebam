@@ -5,7 +5,7 @@ CFLAGS = -O3
 
 LIBS = -lpthread -lm -lbz2 -llzma -lcurl -lz
 
-ALL = onebam ONEview ONEstat seqstat seqconvert
+ALL = onebam bamsort ONEview ONEstat seqstat seqconvert
 
 DESTDIR = ~/bin
 
@@ -117,6 +117,9 @@ gene_core.o: gene_core.c gene_core.h
 
 onebam: onebam.c onebamhts.o oneread.o onebamtax.o taxonomy.o bamsort.o seqio.o ONElib.o MSDsort.o gene_core.o $(UTILS_OBJS) | $(HTS_OBJS) $(ZSTD_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(R_PATH) $(HTS_LIBS) $(ZSTD_LIBS) $(LIBS)
+
+bamsort: bamsort.c $(UTILS_OBJS) | $(HTS_OBJS) $(ZSTD_OBJS)
+	$(CC) $(CFLAGS) -DBAMSORT_MAIN $(HTS_OPTS) $(ZSTD_OPTS) -o $@ $^ $(R_PATH) $(HTS_LIBS) $(ZSTD_LIBS) $(LIBS)
 
 ONEview: ONEview.c ONElib.o
 	$(CC) $(CFLAGS) -o $@ $^

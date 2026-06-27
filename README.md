@@ -79,6 +79,13 @@ onebam bamsort -T 24 -o sorted.bam *.sam *.bam           # sort and merge BAM/SA
 onebam bamsort -T 24 -M -o merged.bam *.bam *.sam *.zst  # merge sorted BAM/SAM/ZST files 
 ```
 
+**Note:** `bamsort` is also available as a standalone program. Instead of running `onebam bamsort`, you can simply run `bamsort`.
+
+```
+bamsort -T 24 -o sorted.bam *.sam *.bam           # sort and merge BAM/SAM files (by read name) 
+                                                  # and remove unused references
+bamsort -T 24 -M -o merged.bam *.bam *.sam *.zst  # merge sorted BAM/SAM/ZST files 
+```
 
 ## C interface
 
