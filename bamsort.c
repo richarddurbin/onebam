@@ -34,7 +34,7 @@
 #define PROGRAM "bamsort"
 
 #ifdef BAMSORT_MAIN
-#define VERSION "1.1"
+#define VERSION "1.2"
 static const char *program = PROGRAM ;
 
 static char usage[] =
