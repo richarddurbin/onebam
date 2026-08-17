@@ -1246,12 +1246,19 @@ static bool yield(int t, void *data, char **s, int *p)
     if (ls->data) {
         bam1_stream_t *stream = ls->data;
         int chunk = stream->mindex;
+        int ended = false;
 
         pthread_mutex_lock(DMUTEX+t);
-        stream->nrec[chunk] = 0;
-        stream->done[chunk] = false;
-        stream->wait = false;
+        ended = (stream->dindex < 0) && (stream->nrec[chunk] == 0);
+        if (!ended) {
+            stream->nrec[chunk] = 0;
+            stream->done[chunk] = false;
+            stream->wait = false;
+        }
         pthread_mutex_unlock(DMUTEX+t);
+
+        // end of data stream
+        if (ended) return false;
 
         pthread_mutex_lock(&JMUTEX);
         Jfree++;
@@ -2186,27 +2193,26 @@ static bool bamsort1(char *infile, char *fn_template, bool trim, bool multi_in, 
             for (i = 0; i < wJ; i++)
                 nrec += bio[WJlist[i]].nrec;
             n_recs += nrec;
-            if (nrec > 0) {
-                fn = new_tempfile(fn_template, true);
-                if (!fn) {
-                    errmsg("failed to create temporary file");
-                    goto err;
-                }
-                array_push(void *, fns, (void *)fn);
-                array_push(int, lcps, common_lcp(bio, WJlist, wJ));
-                // set up zstd writer
-                ((zstd_writer_t *) writer)->fp = fn;
-                if (!merge_blocks_in_mem(bio, wJ, WJlist, writer, merge)) {
-                    errmsg("failed to merge write BAM blocks");
-                    goto err;
-                }
-                // rewind for reading later
-                if (fseek(fn, 0, SEEK_SET) != 0) {
-                    errmsg("failed to rewind temporary file");
-                    goto err;
-                }
-                infomsg("wrote %12zu sorted records to temporary files in %.3f seconds", nrec, elapsed_time(&TIME_STACK, true));
+            // write to temporary file
+            fn = new_tempfile(fn_template, true);
+            if (!fn) {
+                errmsg("failed to create temporary file");
+                goto err;
             }
+            array_push(void *, fns, (void *)fn);
+            array_push(int, lcps, common_lcp(bio, WJlist, wJ));
+            // set up zstd writer
+            ((zstd_writer_t *) writer)->fp = fn;
+            if (!merge_blocks_in_mem(bio, wJ, WJlist, writer, merge)) {
+                errmsg("failed to merge write BAM blocks");
+                goto err;
+            }
+            // rewind for reading later
+            if (fseek(fn, 0, SEEK_SET) != 0) {
+                errmsg("failed to rewind temporary file");
+                goto err;
+            }
+            infomsg("wrote %12zu sorted records to temporary files in %.3f seconds", nrec, elapsed_time(&TIME_STACK, true));
             // reclaim worker threads and signal sorting threads
             pthread_mutex_lock(&TMUTEX);
             Z_THREADS = 0;
