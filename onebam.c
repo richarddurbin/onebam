@@ -65,6 +65,10 @@ static char usage[] =
   "      -T <nthreads>                    number of threads [8]\n"
   "      -m <maxMem>                      maximum memory per thread; suffix K/M/G recognized [768M]\n"
   "      -M                               merge only - input files must be presorted\n"
+  "      -C <reads.list>                  consolidate (no sorting) input records for reads in list order\n"
+  "        -Cb <unmapped.bam>             as -C,  reads from BAM/SAM; also write unmapped reads out\n"
+  "        -Cs <reads.fq>                 as -Cb, reads from single-end FASTQ\n"
+  "        -Cp <r1.fq,r2.fq | inter.fq>   as -Cb, reads from paired FASTQ (two files or interleaved)\n"
   "      -P <tempDir>                     temporary directory for sort files [.]\n"
   "      -zstOutput                       output ZSTD-compressed file\n"
   "      -noTrimHeader                    do not trim header\n"
@@ -218,6 +222,8 @@ int main (int argc, char *argv[])
       bool zstOutput = false ;
       bool mergeOnly = false ;
       char *tempDir = "." ;
+      int   srcType = CSRC_NONE ;
+      char *srcFile = 0 ;
       while (argc && **argv == '-')
   if (!strcmp (*argv, "-o") && argc > 1)
           { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
@@ -233,6 +239,12 @@ int main (int argc, char *argv[])
           { NTHREAD = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
   else if (!strcmp (*argv, "-P") && argc > 1)
     { tempDir = argv[1] ; argv += 2 ; argc -= 2 ; }
+  else if ((!strcmp (*argv, "-C") || !strcmp (*argv, "-Cb") ||
+            !strcmp (*argv, "-Cs") || !strcmp (*argv, "-Cp")) && argc > 1)
+    { srcType = !(*argv)[2] ? CSRC_LIST : (*argv)[2] == 'b' ? CSRC_BAM :
+                (*argv)[2] == 's' ? CSRC_FQ_SE : CSRC_FQ_PE ;
+      srcFile = argv[1] ; argv += 2 ; argc -= 2 ;
+    }
   else if (!strcmp (*argv, "-M"))
     { mergeOnly = true ; ++argv ; --argc ; }
   else if (!strcmp (*argv, "-noTrimHeader"))
@@ -242,7 +254,13 @@ int main (int argc, char *argv[])
   else die ("unknown onebam bamsort option %s - run without args for usage", *argv) ;
       if (argc < 1)
         die ("onebam bamsort needs at least 1 args; run without args for usage") ;
-      if (!bamsort (argv, argc, outFileName, max_mem, NTHREAD, noTrimHeader, zstOutput, tempDir, mergeOnly))
+      if (srcType != CSRC_NONE)
+        { if (mergeOnly) die ("onebam bamsort: -C* and -M cannot be used together") ;
+          if (!bamconsolidate (argv, argc, outFileName, max_mem, NTHREAD, noTrimHeader, zstOutput,
+                               tempDir, srcType, srcFile))
+            die ("failed to consolidate bam files %s", *argv) ;
+        }
+      else if (!bamsort (argv, argc, outFileName, max_mem, NTHREAD, noTrimHeader, zstOutput, tempDir, mergeOnly))
         die ("failed to sort bam file %s", *argv) ;
     }
   else

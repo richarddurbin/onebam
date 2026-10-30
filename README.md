@@ -48,6 +48,10 @@ Usage: onebam <command> <options>* <args>*
       -o <ZZ.bam>                      output file - default is XX.[sorted|merged].bam for input XX.bam
       -T <nthreads>                    number of threads [8]
       -m <maxMem>                      maximum memory per thread; suffix K/M/G recognized [768M]
+      -C <reads.list>                  consolidate (no sorting) input records for reads in list order
+        -Cb <unmapped.bam>             as -C,  reads from BAM/SAM; also write unmapped reads out
+        -Cs <reads.fq>                 as -Cb, reads from single-end FASTQ
+        -Cp <r1.fq,r2.fq | inter.fq>   as -Cb, reads from paired FASTQ (two files or interleaved)
       -M                               merge only - input files must be presorted
       -zstOutput                       output ZSTD-compressed file
       -noTrimHeader                    do not trim header
@@ -71,12 +75,14 @@ seqconvert -fa merged-3688.1read                         #  convert reads to fas
 
 You can view/convert to ASCII the contents of any ONEfile with `ONEview`. Execute this without arguments to see options.  Useful versions are `ONEview -H xx.1read` to see just the header, `ONEview -h xx.1read` to see just the data, and `ONEview -i S 5 xx.1read` to output just the 5th read (reads are sequence objects designated by the `S` onecode).
 
-### BAM/SAM sort
+### BAM/SAM sort/consolidate
 
 ```
 onebam bamsort -T 24 -o sorted.bam *.sam *.bam           # sort and merge BAM/SAM files (by read name) 
                                                          # and remove unused references
 onebam bamsort -T 24 -M -o merged.bam *.bam *.sam *.zst  # merge sorted BAM/SAM/ZST files 
+
+onebam bamsort -T 24 -Cs reads.fq.gz -o cons.bam *.bam   # consolidate BAM/SAM/ZST files
 ```
 
 **Note:** `bamsort` is also available as a standalone program. Instead of running `onebam bamsort`, you can simply run `bamsort`.
@@ -85,6 +91,8 @@ onebam bamsort -T 24 -M -o merged.bam *.bam *.sam *.zst  # merge sorted BAM/SAM/
 bamsort -T 24 -o sorted.bam *.sam *.bam           # sort and merge BAM/SAM files (by read name) 
                                                   # and remove unused references
 bamsort -T 24 -M -o merged.bam *.bam *.sam *.zst  # merge sorted BAM/SAM/ZST files 
+
+bamsort -T 24 -Cs reads.fq.gz -o cons.bam *.bam   # consolidate BAM/SAM/ZST files
 ```
 
 ## C interface

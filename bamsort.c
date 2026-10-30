@@ -34,7 +34,7 @@
 #define PROGRAM "bamsort"
 
 #ifdef BAMSORT_MAIN
-#define VERSION "1.2"
+#define VERSION "1.3"
 static const char *program = PROGRAM ;
 
 static char usage[] =
@@ -46,6 +46,10 @@ static char usage[] =
   "      -T <nthreads>                    number of threads [8]\n"
   "      -m <maxMem>                      maximum memory per thread; suffix K/M/G recognized [768M]\n"
   "      -M                               merge only - input files must be presorted\n"
+  "      -C <reads.list>                  consolidate (no sorting) input records for reads in list order\n"
+  "        -Cb <unmapped.bam>             as -C,  reads from BAM/SAM; also write unmapped reads out\n"
+  "        -Cs <reads.fq>                 as -Cb, reads from single-end FASTQ\n"
+  "        -Cp <r1.fq,r2.fq | inter.fq>   as -Cb, reads from paired FASTQ (two files or interleaved)\n"
   "      -P <tempDir>                     temporary directory for sort files [.]\n"
   "      -zstOutput                       output ZSTD-compressed file\n"
   "      -noTrimHeader                    do not trim header\n"
@@ -53,6 +57,14 @@ static char usage[] =
   
 bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads, 
     bool noTrimHeader, bool zstOutput, char *tempDir, bool mergeOnly);
+
+#ifndef BAMSORT_CSRC_DEFINED
+#define BAMSORT_CSRC_DEFINED
+// read sources for the bamsort -C* consolidate mode
+enum { CSRC_NONE = 0, CSRC_LIST, CSRC_BAM, CSRC_FQ_SE, CSRC_FQ_PE };
+#endif
+bool bamconsolidate (char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads,
+       bool noTrimHeader, bool zstOutput, char *tempDir, int srcType, char *srcFile) ;
 
 int main (int argc, char *argv[])
 {
@@ -68,6 +80,8 @@ int main (int argc, char *argv[])
   bool zstOutput = false ;
   bool mergeOnly = false ;
   char *tempDir = "." ;
+  int   srcType = CSRC_NONE ;
+  char *srcFile = 0 ;
   while (argc && **argv == '-')
   if (!strcmp (*argv, "-o") && argc > 1)
     { outFileName = argv[1] ; argv += 2 ; argc -= 2 ; }
@@ -83,6 +97,12 @@ int main (int argc, char *argv[])
     { nthread = atoi (argv[1]) ; argv += 2 ; argc -= 2 ; }
   else if (!strcmp (*argv, "-P") && argc > 1)
     { tempDir = argv[1] ; argv += 2 ; argc -= 2 ; }
+  else if ((!strcmp (*argv, "-C") || !strcmp (*argv, "-Cb") ||
+            !strcmp (*argv, "-Cs") || !strcmp (*argv, "-Cp")) && argc > 1)
+    { srcType = !(*argv)[2] ? CSRC_LIST : (*argv)[2] == 'b' ? CSRC_BAM :
+                (*argv)[2] == 's' ? CSRC_FQ_SE : CSRC_FQ_PE ;
+      srcFile = argv[1] ; argv += 2 ; argc -= 2 ;
+    }
   else if (!strcmp (*argv, "-M"))
     { mergeOnly = true ; ++argv ; --argc ; }
   else if (!strcmp (*argv, "-noTrimHeader"))
@@ -93,7 +113,13 @@ int main (int argc, char *argv[])
   
   if (argc < 1)
     die ("bamsort needs at least 1 args; run without args for usage") ;
-  if (!bamsort (argv, argc, outFileName, max_mem, nthread, noTrimHeader, zstOutput, tempDir, mergeOnly))
+  if (srcType != CSRC_NONE)
+    { if (mergeOnly) die ("-C* and -M cannot be used together") ;
+      if (!bamconsolidate (argv, argc, outFileName, max_mem, nthread, noTrimHeader, zstOutput,
+                           tempDir, srcType, srcFile))
+        die ("failed to consolidate bam files %s", *argv) ;
+    }
+  else if (!bamsort (argv, argc, outFileName, max_mem, nthread, noTrimHeader, zstOutput, tempDir, mergeOnly))
     die ("failed to sort bam file %s", *argv) ;
     
   destroyCommandLine () ;
@@ -2797,7 +2823,9 @@ err:
             free(bio_data[i].data);
             free(bio_data[i].recs);
             free(bio_data[i].lcps);
-            if (bio_data[i].ftype == FT_ZSTD)
+            if (!bio_data[i].fp)
+                ; // already closed in bamsort1()
+            else if (bio_data[i].ftype == FT_ZSTD)
                 fclose((FILE *)bio_data[i].fp);
             else
                 sam_close((samFile *)bio_data[i].fp);
@@ -3146,6 +3174,892 @@ err:
 
     return ret;
 }
+
+/**************************************************************************/
+/********************* Read-list consolidate (-C*) ************************/
+/**************************************************************************/
+//
+// Input alignment files each hold records for a subset of the reads, in the
+// order given by a read source (a read list, an unmapped BAM/SAM/ZSTD file,
+// or single/paired FASTQ). Records of one read are contiguous within a file.
+// We walk the read source and, for each read, pull its run of records from
+// every file whose current head is that read.
+
+KSEQ_INIT(gzFile, gzread)
+
+typedef struct {
+    uint64_t    h;
+    const char *s;  // name of the head record of file t (valid while t is not advanced)
+    int         t;  // first file in chain; -1 for empty slot
+} cons_slot_t;
+
+typedef struct {
+    cons_slot_t *a;
+    uint32_t     mask;
+    int         *next; // chain of files sharing the same head name
+} cons_htab_t;
+
+typedef struct {
+    bam1_t  *pdat[2], *sdat[2], *udat[2]; // best primary, best secondary, unmapped
+    bool     hasP[2], hasS[2], hasU[2], mapped[2];
+    int32_t  pAS[2], sAS[2];
+} cons_read_t;
+
+typedef struct {
+    int       type;        // CSRC_*
+    int       nIn;         // alignment streams 0..nIn-1; source BAM stream is nIn
+    gzFile    gz1, gz2;
+    kseq_t   *ks1, *ks2;
+    kstring_t line;
+    bam1_t   *src_pending; // -Cb: first record of the next source read
+    bool      src_started;
+    bool      zst;         // writer is a zstd_writer_t (else bam_writer_t)
+    uint8_t  *used;        // used reference flags (merged header space) or NULL
+    char    **fnames;      // for messages
+    size_t    n_reads, n_hit, n_in, n_out, n_prev;
+    int       warned;
+} cons_ctx_t;
+
+static cons_ctx_t *CONS = NULL;
+
+static inline uint64_t cons_hash(const char *s)
+{
+    // FNV-1a with a final avalanche so the low bits are usable as an index
+    uint64_t h = 0xcbf29ce484222325ULL;
+    while (*s) { h ^= (uint8_t)*s++; h *= 0x100000001b3ULL; }
+    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
+    return h;
+}
+
+static void cons_htab_init(cons_htab_t *ht, int T)
+{
+    uint32_t size = 16;
+    while (size < 4u * (uint32_t)T) size <<= 1;
+    ht->a = (cons_slot_t *) malloc(size * sizeof(cons_slot_t));
+    ht->next = (int *) malloc((T > 0? T : 1) * sizeof(int));
+    if (!ht->a || !ht->next) {
+        errmsg("failed to allocate hash table");
+        exit(1);
+    }
+    for (uint32_t i = 0; i < size; i++) ht->a[i].t = -1;
+    ht->mask = size - 1;
+}
+
+static void cons_htab_destroy(cons_htab_t *ht)
+{
+    free(ht->a);
+    free(ht->next);
+}
+
+static inline int64_t cons_htab_find(cons_htab_t *ht, uint64_t h, const char *s)
+{
+    uint32_t i = (uint32_t)h & ht->mask;
+    cons_slot_t *a = ht->a;
+    while (a[i].t >= 0) {
+        if (a[i].h == h && !strcmp(a[i].s, s)) return i;
+        i = (i + 1) & ht->mask;
+    }
+    return -1;
+}
+
+static inline void cons_htab_insert(cons_htab_t *ht, int t, const char *s)
+{
+    uint64_t h = cons_hash(s);
+    uint32_t i = (uint32_t)h & ht->mask;
+    cons_slot_t *a = ht->a;
+    ht->next[t] = -1;
+    while (a[i].t >= 0) {
+        if (a[i].h == h && !strcmp(a[i].s, s)) {
+            // same head name as another file - add to chain (sorted when matched)
+            ht->next[t] = a[i].t;
+            a[i].t = t;
+            return;
+        }
+        i = (i + 1) & ht->mask;
+    }
+    a[i].h = h; a[i].s = s; a[i].t = t;
+}
+
+static inline void cons_htab_delete(cons_htab_t *ht, uint32_t i)
+{
+    // backward-shift deletion for linear probing
+    cons_slot_t *a = ht->a;
+    uint32_t mask = ht->mask, j = i, k;
+    while (1) {
+        j = (j + 1) & mask;
+        if (a[j].t < 0) break;
+        k = (uint32_t)a[j].h & mask;
+        // move a[j] to the hole at i if its home k is not in (i, j]
+        if ((j > i && (k <= i || k > j)) || (j < i && (k <= i && k > j))) {
+            a[i] = a[j];
+            i = j;
+        }
+    }
+    a[i].t = -1;
+}
+
+// next record from stream t; *lcp is the lcp to the previous record in the chunk
+static inline bam1_t *cons_next(heap_t *heaps, int t, int *lcp)
+{
+    char *s;
+    if (!yield(t, heaps, &s, lcp)) return NULL;
+    return heaps[t].recs[heaps[t].i - 1];
+}
+
+// is record b (just returned by cons_next on stream t) still read `name`?
+static inline bool cons_same(heap_t *ls, int lcp, bam1_t *b, const char *name)
+{
+    if (lcp < 0) return true;          // identical to previous record
+    if (ls->i == 1)                    // first record of a newly buffered chunk
+        return !strcmp(bam_get_qname(b), name);
+    return false;
+}
+
+static inline void cons_write(cons_ctx_t *cx, void *w, bam1_t *b)
+{
+    int res;
+    if (cx->used) {
+        if (b->core.tid  >= 0) cx->used[b->core.tid]  = 1;
+        if (b->core.mtid >= 0) cx->used[b->core.mtid] = 1;
+    }
+    res = cx->zst? zstd_bam_write1((zstd_writer_t *)w, b) : bw_bam_write1((bam_writer_t *)w, b);
+    if (res < 0) {
+        errmsg("failed writing BAM record");
+        exit(1);
+    }
+    cx->n_out++;
+}
+
+static inline void cons_copy(bam1_t *dst, const bam1_t *src)
+{
+    if (!bam_copy1(dst, src)) {
+        errmsg("failed copying BAM record");
+        exit(1);
+    }
+}
+
+// add one alignment record of the current read
+static inline void cons_add(cons_ctx_t *cx, cons_read_t *rs, void *w, bam1_t *b)
+{
+    int m = is_read2(b);
+    uint16_t fl = b->core.flag;
+    int32_t as;
+
+    cx->n_in++;
+    if (fl & BAM_FUNMAP) {
+        // keep only one unmapped record (read source has priority as it fills first)
+        if (!rs->hasU[m]) {
+            cons_copy(rs->udat[m], b);
+            rs->hasU[m] = true;
+        }
+        return;
+    }
+    rs->mapped[m] = true;
+    if (fl & BAM_FSUPPLEMENTARY) {
+        cons_write(cx, w, b);
+        return;
+    }
+    as = get_AS_score(b);
+    if (!(fl & BAM_FSECONDARY)) {
+        // primary candidate
+        if (rs->hasS[m]) {
+            // a primary exists so the held secondary stays secondary
+            cons_write(cx, w, rs->sdat[m]);
+            rs->hasS[m] = false;
+        }
+        if (!rs->hasP[m]) {
+            cons_copy(rs->pdat[m], b);
+            rs->pAS[m] = as;
+            rs->hasP[m] = true;
+        } else if (as > rs->pAS[m]) {
+            rs->pdat[m]->core.flag |= BAM_FSECONDARY;
+            cons_write(cx, w, rs->pdat[m]);
+            cons_copy(rs->pdat[m], b);
+            rs->pAS[m] = as;
+        } else {
+            b->core.flag |= BAM_FSECONDARY;
+            cons_write(cx, w, b);
+        }
+    } else if (rs->hasP[m]) {
+        cons_write(cx, w, b);
+    } else if (!rs->hasS[m]) {
+        // hold the best secondary in case no primary turns up
+        cons_copy(rs->sdat[m], b);
+        rs->sAS[m] = as;
+        rs->hasS[m] = true;
+    } else if (as > rs->sAS[m]) {
+        cons_write(cx, w, rs->sdat[m]);
+        cons_copy(rs->sdat[m], b);
+        rs->sAS[m] = as;
+    } else {
+        cons_write(cx, w, b);
+    }
+}
+
+static inline void cons_finish_read(cons_ctx_t *cx, cons_read_t *rs, void *w)
+{
+    int m;
+    for (m = 0; m < 2; m++) {
+        if (rs->hasP[m]) {
+            cons_write(cx, w, rs->pdat[m]);
+        } else if (rs->hasS[m]) {
+            // no primary anywhere - promote best secondary
+            rs->sdat[m]->core.flag &= ~BAM_FSECONDARY;
+            cons_write(cx, w, rs->sdat[m]);
+        }
+        if (!rs->mapped[m] && rs->hasU[m]) {
+            rs->udat[m]->core.flag &= ~SECFLAG;
+            cons_write(cx, w, rs->udat[m]);
+        }
+        rs->hasP[m] = rs->hasS[m] = rs->hasU[m] = rs->mapped[m] = false;
+    }
+}
+
+// strip a trailing /1 or /2 from a FASTQ read name
+static inline size_t cons_fq_name_len(kstring_t *name)
+{
+    size_t l = name->l;
+    if (l > 2 && name->s[l-2] == '/' && (name->s[l-1] == '1' || name->s[l-1] == '2'))
+        l -= 2;
+    name->s[l] = '\0';
+    return l;
+}
+
+static void cons_fq_record(bam1_t *b, kseq_t *ks, uint16_t flag)
+{
+    size_t i, l_name = cons_fq_name_len(&ks->name);
+    char *qual = NULL;
+    if (l_name == 0 || l_name > 254) {
+        errmsg("invalid FASTQ read name length %zu: \"%s\"", l_name, ks->name.s);
+        exit(1);
+    }
+    if (ks->qual.l) {
+        if (ks->qual.l != ks->seq.l) {
+            errmsg("FASTQ sequence and quality lengths differ for read %s", ks->name.s);
+            exit(1);
+        }
+        qual = ks->qual.s;
+        for (i = 0; i < ks->qual.l; i++) qual[i] -= 33;
+    }
+    if (bam_set1(b, l_name, ks->name.s, flag, -1, -1, 0, 0, NULL, -1, -1, 0,
+            ks->seq.l, ks->seq.s, qual, 0) < 0) {
+        errmsg("failed to create unmapped record for read %s", ks->name.s);
+        exit(1);
+    }
+}
+
+// fetch the next read from the read source; returns its name or NULL at end
+static const char *cons_next_read(cons_ctx_t *cx, heap_t *heaps, cons_read_t *rs, void *w)
+{
+    int dret, r1, r2, lcp;
+    size_t i;
+    char *s;
+    bam1_t *b;
+    const char *name;
+
+    switch (cx->type) {
+        case CSRC_LIST:
+            while (ks_getuntil(cx->ks1->f, KS_SEP_LINE, &cx->line, &dret) >= 0) {
+                s = cx->line.s;
+                for (i = 0; i < cx->line.l && s[i] != ' ' && s[i] != '\t'; i++) ;
+                s[i] = '\0';
+                if (i) return s;
+            }
+            return NULL;
+        case CSRC_FQ_SE:
+            r1 = kseq_read(cx->ks1);
+            if (r1 < -1) { errmsg("truncated or malformed FASTQ input"); exit(1); }
+            if (r1 < 0) return NULL;
+            cons_fq_record(rs->udat[0], cx->ks1, BAM_FUNMAP);
+            rs->hasU[0] = true;
+            return bam_get_qname(rs->udat[0]);
+        case CSRC_FQ_PE:
+            r1 = kseq_read(cx->ks1);
+            if (r1 < -1) { errmsg("truncated or malformed FASTQ input"); exit(1); }
+            if (r1 < 0) return NULL;
+            cons_fq_record(rs->udat[0], cx->ks1, BAM_FPAIRED|BAM_FUNMAP|BAM_FMUNMAP|BAM_FREAD1);
+            r2 = kseq_read(cx->ks2);
+            if (r2 < 0) {
+                errmsg("paired FASTQ input: no mate for read %s", bam_get_qname(rs->udat[0]));
+                exit(1);
+            }
+            cons_fq_record(rs->udat[1], cx->ks2, BAM_FPAIRED|BAM_FUNMAP|BAM_FMUNMAP|BAM_FREAD2);
+            if (strcmp(bam_get_qname(rs->udat[0]), bam_get_qname(rs->udat[1])) && cx->warned++ < 5)
+                warnmsg("paired FASTQ read names differ: %s vs %s", 
+                    bam_get_qname(rs->udat[0]), bam_get_qname(rs->udat[1]));
+            rs->hasU[0] = rs->hasU[1] = true;
+            return bam_get_qname(rs->udat[0]);
+        case CSRC_BAM:
+            if (!cx->src_started) {
+                cx->src_pending = cons_next(heaps, cx->nIn, &lcp);
+                cx->src_started = true;
+            }
+            b = cx->src_pending;
+            if (!b) return NULL;
+            // the first record of the group is copied and provides the name
+            cons_add(cx, rs, w, b);
+            name = rs->hasU[is_read2(b)]? bam_get_qname(rs->udat[is_read2(b)]) : NULL;
+            if (!name) {
+                // a mapped source record - keep a copy of the name
+                cx->line.l = 0;
+                kputs(bam_get_qname(b), &cx->line);
+                name = cx->line.s;
+            }
+            while ((b = cons_next(heaps, cx->nIn, &lcp)) && cons_same(heaps + cx->nIn, lcp, b, name))
+                cons_add(cx, rs, w, b);
+            cx->src_pending = b;
+            return name;
+        default:
+            return NULL;
+    }
+}
+
+static void *cons_thread(void *args)
+{
+    merge_args_t *margs = (merge_args_t *) args;
+    heap_t *heaps = margs->heaps;
+    void *w = margs->writer;
+    cons_ctx_t *cx = CONS;
+    int nIn = cx->nIn;
+    int t, u, lcp, nlive = 0, n_touched;
+    size_t left;
+    int64_t slot;
+    bam1_t *b, **hb;
+    int *touched;
+    const char *name;
+    cons_htab_t ht;
+    cons_read_t rs;
+
+    memset(&rs, 0, sizeof(rs));
+    for (t = 0; t < 2; t++) {
+        rs.pdat[t] = bam_init1();
+        rs.sdat[t] = bam_init1();
+        rs.udat[t] = bam_init1();
+        if (!rs.pdat[t] || !rs.sdat[t] || !rs.udat[t]) {
+            errmsg("memory allocation failed");
+            exit(1);
+        }
+    }
+    hb = (bam1_t **) calloc(nIn > 0? nIn : 1, sizeof(bam1_t *));
+    touched = (int *) malloc((nIn > 0? nIn : 1) * sizeof(int));
+    if (!hb || !touched) {
+        errmsg("memory allocation failed");
+        exit(1);
+    }
+    cons_htab_init(&ht, nIn);
+
+    push_time(&TIME_STACK);
+    // first head of each input
+    for (t = 0; t < nIn; t++) {
+        hb[t] = cons_next(heaps, t, &lcp);
+        if (hb[t]) {
+            cons_htab_insert(&ht, t, bam_get_qname(hb[t]));
+            nlive++;
+        }
+    }
+
+    while ((name = cons_next_read(cx, heaps, &rs, w))) {
+        cx->n_reads++;
+        if (nlive && (slot = cons_htab_find(&ht, cons_hash(name), name)) >= 0) {
+            cx->n_hit++;
+            // collect the chain and free the slot before any stream moves on
+            n_touched = 0;
+            for (u = ht.a[slot].t; u >= 0; u = ht.next[u]) {
+                // keep input file order so AS ties resolve to the earliest file
+                t = n_touched++;
+                while (t > 0 && touched[t-1] > u) { touched[t] = touched[t-1]; t--; }
+                touched[t] = u;
+            }
+            cons_htab_delete(&ht, (uint32_t)slot);
+            for (u = 0; u < n_touched; u++) {
+                t = touched[u];
+                b = hb[t];
+                do {
+                    cons_add(cx, &rs, w, b);
+                } while ((b = cons_next(heaps, t, &lcp)) && cons_same(heaps + t, lcp, b, name));
+                hb[t] = b;
+                if (b) cons_htab_insert(&ht, t, bam_get_qname(b));
+                else nlive--;
+            }
+        }
+        cons_finish_read(cx, &rs, w);
+        if (cx->n_in >= 10000000 + cx->n_prev) {
+            infomsg("processed %12zu reads %12zu records in %.3f seconds", 
+                cx->n_reads, cx->n_in, elapsed_time(&TIME_STACK, false));
+            cx->n_prev = cx->n_in;
+        }
+    }
+
+    // anything left means an input is not in read source order or has extra reads;
+    // drain the streams so the buffering threads can finish
+    for (t = 0; t < nIn; t++) {
+        if (!hb[t]) continue;
+        warnmsg("input %s has records not consumed by the read source, starting at read %s",
+            cx->fnames[t], bam_get_qname(hb[t]));
+        left = 1;
+        while (cons_next(heaps, t, &lcp)) left++;
+        warnmsg("  %zu records of %s were skipped", left, cx->fnames[t]);
+    }
+    if (cx->type == CSRC_BAM && cx->src_pending)
+        while (cons_next(heaps, nIn, &lcp)) ;
+
+    if (cx->zst && zstd_writer_flush((zstd_writer_t *) w) < 0) {
+        errmsg("failed to flush ZSTD writer");
+        exit(1);
+    }
+    infomsg("processed %12zu reads (%zu with alignments) %zu records in, %zu records out in %.3f seconds",
+        cx->n_reads, cx->n_hit, cx->n_in, cx->n_out, pop_time(&TIME_STACK));
+
+    cons_htab_destroy(&ht);
+    free(hb);
+    free(touched);
+    for (t = 0; t < 2; t++) {
+        bam_destroy1(rs.pdat[t]);
+        bam_destroy1(rs.sdat[t]);
+        bam_destroy1(rs.udat[t]);
+    }
+    return NULL;
+}
+
+// pass 2: copy the temporary records to the final output (tid/mtid remapped by the stream)
+static void *cons_copy_thread(void *args)
+{
+    merge_args_t *margs = (merge_args_t *) args;
+    heap_t *heaps = margs->heaps;
+    void *w = margs->writer;
+    cons_ctx_t *cx = CONS;
+    bam1_t *b;
+    int lcp;
+    size_t n = 0;
+
+    push_time(&TIME_STACK);
+    while ((b = cons_next(heaps, 0, &lcp))) {
+        if ((cx->zst? zstd_bam_write1((zstd_writer_t *)w, b) : bw_bam_write1((bam_writer_t *)w, b)) < 0) {
+            errmsg("failed writing BAM record");
+            exit(1);
+        }
+        n++;
+    }
+    if (cx->zst && zstd_writer_flush((zstd_writer_t *) w) < 0) {
+        errmsg("failed to flush ZSTD writer");
+        exit(1);
+    }
+    infomsg("written %12zu records in %.3f seconds", n, pop_time(&TIME_STACK));
+    return NULL;
+}
+
+// open the final output and write the header; adapted from mergebam()
+static bool cons_open_output(sam_hdr_lite_t *header, char **_outfile, bool *derived, size_t name_len,
+    int n_threads, bool zstOutput, FILE **_fn_out, zstd_writer_t **_zw, bam_writer_t **_bw)
+{
+    char *outfile = *_outfile;
+    struct stat st;
+    bool bam_ok = true;
+    FILE *fn_out = NULL;
+    int i;
+
+    N_THREADS = n_threads;
+    W_THREADS = n_threads < 4? n_threads : 4;
+
+    if (header->sq_map) { kh_destroy(c2i,  header->sq_map); header->sq_map = NULL; }
+    if (header->rg_ids) { kh_destroy(cset, header->rg_ids); header->rg_ids = NULL; }
+    if (header->pg_ids) { kh_destroy(cset, header->pg_ids); header->pg_ids = NULL; }
+
+    if (zstOutput) {
+        fn_out = fopen(outfile, "w+b");
+        if (!fn_out) {
+            errmsg("failed to open output file: %s", outfile);
+            return false;
+        }
+        *_fn_out = fn_out;
+        *_zw = zstd_writer_init(ZSTD_COMPRESSION_LEVEL, W_THREADS, fn_out);
+        if (!*_zw) {
+            errmsg("failed to initialize zstd writer");
+            return false;
+        }
+        if (zstd_sam_hdr_lite_write(*_zw, header) != 0) {
+            errmsg("failed to write SAM header to ZSTD file \"%s\"", outfile);
+            return false;
+        }
+    } else {
+        int r_threads, w_threads;
+        r_threads = w_threads = N_THREADS / 2;
+        if (r_threads > 9) {
+            r_threads = 9;
+            w_threads = N_THREADS - r_threads;
+        }
+        if (w_threads < 1) w_threads = 1;
+        if (w_threads > MAX_WWORKER_THREADS) w_threads = MAX_WWORKER_THREADS;
+        r_threads = N_THREADS - w_threads;
+        if (r_threads < 1) r_threads = 1;
+        N_THREADS = r_threads;
+        W_THREADS = 1;
+        infomsg("allocated %d threads for reading", r_threads);
+        infomsg("allocated %d threads for writing", w_threads);
+
+        size_t l_text = sam_hdr_lite_min_text_len(header);
+        bam_ok = l_text <= BAM_MAX_HEADER_SIZE;
+        if (!bam_ok) {
+            char *f = (char *) malloc(name_len);
+            int l = strlen(outfile), x = 0;
+            pid_t pid = getpid();
+            if (l > 4 && strcmp(outfile + l - 4, ".bam") == 0)
+                l -= 4;
+            snprintf(f, name_len, "%.*s.sam.gz", l, outfile);
+            while (stat(f, &st) == 0)
+                snprintf(f, name_len, "%.*s.%d-%d.sam.gz", l, outfile, pid, ++x);
+            if (*derived) free(outfile);
+            *_outfile = outfile = f;
+            *derived = true;
+            warnmsg("BAM header too large writing as BGZF compressed SAM: \"%s\"", outfile);
+        }
+        fn_out = fopen(outfile, "w+b");
+        if (!fn_out) {
+            errmsg("failed to open output file: %s", outfile);
+            return false;
+        }
+        *_fn_out = fn_out;
+        if (bam_ok) {
+            if (bw_bam_hdr_lite_write(fn_out, header) != 0) {
+                errmsg("failed to write SAM header to BAM file \"%s\"", outfile);
+                return false;
+            }
+        } else {
+            if (bw_sam_hdr_lite_write(fn_out, header) != 0) {
+                errmsg("failed to write SAM header to SAM file \"%s\"", outfile);
+                return false;
+            }
+        }
+        *_bw = bam_writer_init(fn_out, w_threads, WW_MAX_MEM);
+        if (!*_bw) {
+            errmsg("failed to initialize multi-threaded BAM writer");
+            return false;
+        }
+        (*_bw)->compress = bam_ok? bw_bam_compress : bw_sam_compress;
+    }
+
+    if (!bam_ok) {
+        sam_hdr_lite_build_targets_tbl(header);
+        for (i = 0; i < (*_bw)->n_workers; i++) {
+            (*_bw)->workers[i].args = sam_compArgs_make(header, 1024);
+            (*_bw)->workers[i].argfree = sam_compArgs_free;
+        }
+    } else cstr_array_destroy(&header->sq_text);
+    ks_free(&header->hd_text);
+    cstr_array_destroy(&header->rg_text);
+    cstr_array_destroy(&header->pg_text);
+    cstr_array_destroy(&header->co_text);
+
+    return true;
+}
+
+static void cons_free_streams(bam1_stream_t *bs, int n)
+{
+    int i;
+    if (!bs) return;
+    for (i = 0; i < n; i++) {
+        if (bs[i].freeArgs)
+            bs[i].freeArgs(bs[i].readerArgs);
+        free(bs[i].outBuf);
+        free(bs[i].recs[0]);
+        free(bs[i].lcps[0]);
+    }
+    free(bs);
+}
+
+bool bamconsolidate(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads,
+    bool noTrimHeader, bool zstOutput, char *tempDir, int srcType, char *srcFile)
+{
+    srt_data_t *srt_data = NULL, srt_tmp;
+    sam_hdr_lite_t *header = NULL, *builder = NULL;
+    bam1_stream_t *bam_streams = NULL;
+    bam_writer_t *bam_writer = NULL;
+    zstd_writer_t *zst_writer = NULL;
+    refseq_builder_t *refseqs = NULL;
+    cons_ctx_t cx;
+    struct stat st;
+    size_t name_len, tot_mem;
+    FILE *fn_out = NULL, *fn_tmp = NULL;
+    char *fn_template = NULL, *basename, *src1 = NULL, *src2 = NULL, *comma;
+    char **fnames = NULL;
+    bool ret = false, derived = false, trim = !noTrimHeader;
+    int i, j, *refs, *tmap = NULL, nAll, n_streams = 0;
+
+    memset(&cx, 0, sizeof(cx));
+    memset(&srt_tmp, 0, sizeof(srt_tmp));
+
+    long one = 1;
+    IS_BIG_ENDIAN = !(*((char *)(&one)));
+
+    // sanity checks
+    if (tempDir) {
+        if (access(tempDir, W_OK | X_OK) || stat(tempDir, &st) || !S_ISDIR(st.st_mode)) {
+            errmsg("cannot access temporary directory: %s", tempDir);
+            return false;
+        }
+        TEMPDIR = tempDir;
+    }
+    if (infiles == NULL || nIn < 1) {
+        errmsg("no input files specified");
+        return false;
+    }
+    if (srcType == CSRC_NONE || !srcFile) {
+        errmsg("no read source specified");
+        return false;
+    }
+    src1 = strdup(srcFile);
+    if (!src1) {
+        errmsg("memory allocation failed");
+        return false;
+    }
+    if (srcType == CSRC_FQ_PE && (comma = strchr(src1, ','))) {
+        *comma = '\0';
+        src2 = comma + 1;
+    }
+    nAll = nIn + (srcType == CSRC_BAM);
+    fnames = (char **) malloc(nAll * sizeof(char *));
+    if (!fnames) {
+        errmsg("memory allocation failed");
+        goto err;
+    }
+    for (i = 0; i < nAll; i++) {
+        fnames[i] = i < nIn? infiles[i] : src1;
+        if (!fnames[i] || access(fnames[i], R_OK) || stat(fnames[i], &st) || !S_ISREG(st.st_mode)) {
+            errmsg("accessing input file failed: %s", fnames[i]);
+            goto err;
+        }
+    }
+    if (srcType != CSRC_BAM && (access(src1, R_OK) || (src2 && access(src2, R_OK)))) {
+        errmsg("accessing read source failed: %s", srcFile);
+        goto err;
+    }
+    set_s_rlimit();
+
+    if (n_threads < 2) n_threads = 1;
+    if (!max_mem) max_mem = MAX_MEM_PER_THREAD;
+    if (max_mem < (SORT_MIN_MEGS_PER_THREAD << 20)) {
+        complain_about_memory_setting(max_mem);
+        goto err;
+    }
+    tot_mem = max_mem * n_threads;
+
+    if (!outfile) {
+        outfile = derivedName(infiles[0], "consolidated.bam");
+        if (!outfile) {
+            errmsg("failed to create output file name");
+            goto err;
+        }
+        derived = true;
+        if (stat(outfile, &st) == 0) {
+            errmsg("output file exists: %s", outfile);
+            goto err;
+        }
+    }
+    name_len = strlen(TEMPDIR) + strlen(outfile) + 64;
+    basename = strrchr(outfile, '/');
+    basename = basename? basename + 1 : outfile;
+
+    // read headers and build the merged header
+    srt_data = (srt_data_t *) calloc(nAll, sizeof(srt_data_t));
+    refseqs = refseq_builder_init(nAll, 0, NULL);
+    builder = sam_hdr_lite_builder_init();
+    if (!srt_data || !refseqs || !builder) {
+        errmsg("failed to initialize header builder");
+        goto err;
+    }
+    for (i = 0; i < nAll; i++) {
+        infomsg("reading header from input file [%d/%d]: %s", i+1, nAll, fnames[i]);
+        push_time(&TIME_STACK);
+        if (!open_sorted_file(fnames[i], srt_data+i, refseqs)) {
+            errmsg("failed to read header from file: %s", fnames[i]);
+            goto err;
+        }
+        header = srt_data[i].header;
+        refs = srt_data[i].refs;
+        if (refs) {
+            refs += 1;
+            if (refs[-1] <= 0)
+                for (j = 0; j < header->n_targets; j++)
+                    refs[j] = 1;
+        }
+        if (!sam_hdr_lite_build_tbl(builder, header, refs)) {
+            errmsg("failed to build translation table");
+            goto err;
+        }
+        infomsg("built translation table in %.3f seconds", pop_time(&TIME_STACK));
+        infomsg("BAM file reference sequences: %d", header->n_targets);
+        infomsg("merged reference sequences: %d", builder->n_targets);
+        if (srt_data[i].ftype != FT_SAM) {
+            sam_hdr_lite_destroy(header);
+            srt_data[i].header = NULL;
+        }
+    }
+    header = NULL;
+    if (sam_hdr_lite_add_pg(builder, program, VERSION, getCommandLine()) < 0) {
+        errmsg("failed to add PG line to SAM header");
+        goto err;
+    }
+    if (sam_hdr_lite_build_HD(builder, NULL, "unsorted") < 0) {
+        errmsg("failed to build SAM header HD line");
+        goto err;
+    }
+    header = builder; builder = NULL;
+
+    // read source
+    cx.type = srcType;
+    cx.nIn = nIn;
+    cx.fnames = fnames;
+    if (srcType != CSRC_BAM) {
+        cx.gz1 = gzopen(src1, "r");
+        if (!cx.gz1 || !(cx.ks1 = kseq_init(cx.gz1))) {
+            errmsg("failed to open read source: %s", src1);
+            goto err;
+        }
+        if (srcType == CSRC_FQ_PE) {
+            if (src2) {
+                cx.gz2 = gzopen(src2, "r");
+                if (!cx.gz2 || !(cx.ks2 = kseq_init(cx.gz2))) {
+                    errmsg("failed to open read source: %s", src2);
+                    goto err;
+                }
+            } else cx.ks2 = cx.ks1; // interleaved
+        }
+    }
+    CONS = &cx;
+
+    // pass 1
+    if (trim) {
+        cx.used = (uint8_t *) calloc(header->n_targets + 1, 1);
+        fn_template = (char *) malloc(name_len);
+        if (!cx.used || !fn_template) {
+            errmsg("memory allocation failed");
+            goto err;
+        }
+        snprintf(fn_template, name_len, "%s/%s.cons.XXXXXX", TEMPDIR, basename);
+        fn_tmp = new_tempfile(fn_template, true);
+        if (!fn_tmp) {
+            errmsg("failed to create temporary file in %s", TEMPDIR);
+            goto err;
+        }
+        N_THREADS = n_threads;
+        W_THREADS = n_threads < 4? n_threads : 4;
+        zst_writer = zstd_writer_init(ZSTD_COMPRESSION_LEVEL, W_THREADS, fn_tmp);
+        if (!zst_writer) {
+            errmsg("failed to initialize zstd writer");
+            goto err;
+        }
+        cx.zst = true;
+    } else {
+        if (!cons_open_output(header, &outfile, &derived, name_len, n_threads, zstOutput,
+                &fn_out, &zst_writer, &bam_writer))
+            goto err;
+        cx.zst = zstOutput;
+    }
+
+    infomsg("consolidating %d input files by read source %s", nIn, srcFile);
+    bam_streams = create_bam1_streams(srt_data, nAll, tot_mem, &n_streams);
+    if (!bam_streams) {
+        errmsg("failed to create BAM stream contexts");
+        goto err;
+    }
+    if (!merge_blocks(bam_streams, n_streams, cx.zst? (void *)zst_writer : (void *)bam_writer, cons_thread)) {
+        errmsg("failed to consolidate input files");
+        goto err;
+    }
+    cons_free_streams(bam_streams, n_streams); bam_streams = NULL;
+
+    // pass 2
+    if (trim) {
+        zstd_writer_destroy(zst_writer); zst_writer = NULL;
+        if (fflush(fn_tmp) || fseek(fn_tmp, 0, SEEK_SET)) {
+            errmsg("failed to rewind temporary file");
+            goto err;
+        }
+        // trim header; tmap[1+j] is the used flag for merged reference j
+        tmap = (int *) calloc(header->n_targets + 1, sizeof(int));
+        if (!tmap) {
+            errmsg("memory allocation failed");
+            goto err;
+        }
+        for (j = 0; j < header->n_targets; j++)
+            tmap[j+1] = cx.used[j];
+        if (header->sq_map) { kh_destroy(c2i, header->sq_map); header->sq_map = NULL; }
+        if (sam_hdr_lite_trim(header, tmap + 1) < 0) {
+            errmsg("failed to trim SAM header");
+            goto err;
+        }
+        if (!cons_open_output(header, &outfile, &derived, name_len, n_threads, zstOutput,
+                &fn_out, &zst_writer, &bam_writer))
+            goto err;
+        cx.zst = zstOutput;
+        // stream the temporary file back with tid remapping
+        srt_tmp.ftype = FT_ZSTD;
+        srt_tmp.nfile = 1;
+        srt_tmp.fns = (void **) &fn_tmp;
+        srt_tmp.refs = tmap;
+        infomsg("writing consolidated records to %s", outfile);
+        bam_streams = create_bam1_streams(&srt_tmp, 1, tot_mem, &n_streams);
+        if (!bam_streams) {
+            errmsg("failed to create BAM stream contexts");
+            goto err;
+        }
+        if (!merge_blocks(bam_streams, n_streams, zstOutput? (void *)zst_writer : (void *)bam_writer, cons_copy_thread)) {
+            errmsg("failed to write output file");
+            goto err;
+        }
+    }
+
+    if (zstOutput) {
+        fclose(fn_out); fn_out = NULL;
+    } else if (bam_writer_close(bam_writer) != 0) {
+        errmsg("failed to finalize BAM output file");
+        goto err;
+    }
+    infomsg("output written to %s", outfile);
+
+    ret = true;
+
+err:
+    CONS = NULL;
+    if (derived) free(outfile);
+    if (fn_out) fclose(fn_out);
+    if (fn_tmp) fclose(fn_tmp);
+    if (srt_data) {
+        for (i = 0; i < nAll; i++) {
+            for (j = 0; srt_data[i].fns && j < srt_data[i].nfile; j++)
+                if (!srt_data[i].fns[j]) continue;
+                else if (srt_data[i].ftype == FT_ZSTD)
+                    fclose((FILE *)srt_data[i].fns[j]);
+                else
+                    sam_close((samFile *)srt_data[i].fns[j]);
+            free(srt_data[i].fns);
+            free(srt_data[i].lcps);
+            sam_hdr_lite_destroy(srt_data[i].header);
+        }
+        free(srt_data);
+    }
+    cons_free_streams(bam_streams, n_streams);
+    if (cx.ks2 && cx.ks2 != cx.ks1) kseq_destroy(cx.ks2);
+    if (cx.ks1) kseq_destroy(cx.ks1);
+    if (cx.gz1) gzclose(cx.gz1);
+    if (cx.gz2) gzclose(cx.gz2);
+    free(cx.line.s);
+    free(cx.used);
+    free(tmap);
+    free(fn_template);
+    free(fnames);
+    free(src1);
+    refseq_builder_destroy(refseqs);
+    sam_hdr_lite_destroy(builder);
+    sam_hdr_lite_destroy(header);
+    zstd_writer_destroy(zst_writer);
+    bam_writer_destroy(bam_writer);
+
+    return ret;
+}
+
+/********************* END consolidate ********************/
+
 
 static bool open_sorted_file(char *infile, srt_data_t *srt, refseq_builder_t *rdb)
 {
@@ -5071,9 +5985,8 @@ static inline char *get_eol(char *ptr, char *eptr)
 
 static inline char *get_tag(char *ptr, char *eptr, const char *tag)
 {
-    char *p, *q;
-    eptr -= 4; // ensure space for tag+':'+delimiter
-    for (p = ptr; p < eptr; p++) {
+    char *p, *q, *last = eptr - 3;
+    for (p = ptr; p < last; p++) {
         if ((p[-1] == '\t' || p[-1] == '\0') &&
             p[0] == tag[0] && p[1] == tag[1] && p[2] == ':') {
             q = p += 3;
@@ -5762,7 +6675,7 @@ err:
         free(pinfo.a[i].dup);
     free(pinfo.a);
     free(tstr.s);
-    return ret;
+    return res;
 }
 
 /****************** END SAM Header Lite *******************/
@@ -5868,6 +6781,21 @@ fail:
 
 #define FP_SLEN 100
 
+static void sam_hdr_lite_terminate_sn(sam_hdr_lite_t *hdr)
+{
+    size_t i;
+    char *line, *last, *endl;
+    for (i = 0; i < hdr->sq_text.n; i++) {
+        line = hdr->sq_text.a[i].string;
+        last = line + hdr->sq_text.a[i].length;
+        while (line < last) {
+            endl = get_eol(line, last);
+            get_tag(line+4, endl, "SN");
+            line = endl + 1;
+        }
+    }
+}
+
 static char *build_sq_fingerprint(cstr_array_t *sq_text, size_t sq_len) {
     if (!sq_text || sq_len == 0) return strdup("<empty>"); // special case for empty @SQ
     int t = sq_text->n - 1; // last @SQ line
@@ -5880,9 +6808,10 @@ static char *build_sq_fingerprint(cstr_array_t *sq_text, size_t sq_len) {
     size_t cap = head + tail + 20 + 1;
     char *fp = (char *) malloc(cap);
     if (!fp) return NULL;
-    size_t off = 0;
+    size_t j, off = 0;
     if (head) { memcpy(fp + off, hseq, head); off += head; }
     if (tail) { memcpy(fp + off, tseq, tail); off += tail; }
+    for (j = 0; j < off; j++) if (!fp[j]) fp[j] = '\t';
     off += (size_t) snprintf(fp + off, cap - off, "%zu", sq_len);
     fp[off] = 0;
     return fp;
@@ -5895,6 +6824,9 @@ static int refseq_builder_add(refseq_builder_t *rdb, sam_hdr_lite_t *hdr, int **
     char *fprint = NULL;
     
     if (!rdb || !hdr) goto fail;
+
+    // same text form for SAM, BAM and zstd headers
+    sam_hdr_lite_terminate_sn(hdr);
 
     // build fingerprint
     cstr_array_t *sq_text = &hdr->sq_text;
