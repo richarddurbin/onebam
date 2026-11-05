@@ -55,6 +55,7 @@ Usage: onebam <command> <options>* <args>*
       -M                               merge only - input files must be presorted
       -zstOutput                       output ZSTD-compressed file
       -noTrimHeader                    do not trim header
+      -noUnmapped                      do not output unmapped records
 ```
 
 ## Synopsis

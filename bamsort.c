@@ -53,10 +53,11 @@ static char usage[] =
   "      -P <tempDir>                     temporary directory for sort files [.]\n"
   "      -zstOutput                       output ZSTD-compressed file\n"
   "      -noTrimHeader                    do not trim header\n"
+  "      -noUnmapped                      do not output unmapped records\n"
   "\n";
   
 bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads, 
-    bool noTrimHeader, bool zstOutput, char *tempDir, bool mergeOnly);
+    bool noTrimHeader, bool noUnmapped, bool zstOutput, char *tempDir, bool mergeOnly);
 
 #ifndef BAMSORT_CSRC_DEFINED
 #define BAMSORT_CSRC_DEFINED
@@ -64,7 +65,7 @@ bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threa
 enum { CSRC_NONE = 0, CSRC_LIST, CSRC_BAM, CSRC_FQ_SE, CSRC_FQ_PE };
 #endif
 bool bamconsolidate (char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads,
-       bool noTrimHeader, bool zstOutput, char *tempDir, int srcType, char *srcFile) ;
+       bool noTrimHeader, bool noUnmapped, bool zstOutput, char *tempDir, int srcType, char *srcFile) ;
 
 int main (int argc, char *argv[])
 {
@@ -79,6 +80,7 @@ int main (int argc, char *argv[])
   bool noTrimHeader = false ;
   bool zstOutput = false ;
   bool mergeOnly = false ;
+  bool noUnmapped = false ;
   char *tempDir = "." ;
   int   srcType = CSRC_NONE ;
   char *srcFile = 0 ;
@@ -109,17 +111,20 @@ int main (int argc, char *argv[])
     { noTrimHeader = true ; ++argv ; --argc ; }
   else if (!strcmp (*argv, "-zstOutput"))
     { zstOutput = true ; ++argv ; --argc ; }
+  else if (!strcmp (*argv, "-noUnmapped"))
+    { noUnmapped = true ; ++argv ; --argc ; }
   else die ("unknown bamsort option %s - run without args for usage", *argv) ;
   
   if (argc < 1)
     die ("bamsort needs at least 1 args; run without args for usage") ;
   if (srcType != CSRC_NONE)
     { if (mergeOnly) die ("-C* and -M cannot be used together") ;
-      if (!bamconsolidate (argv, argc, outFileName, max_mem, nthread, noTrimHeader, zstOutput,
-                           tempDir, srcType, srcFile))
+      if (!bamconsolidate (argv, argc, outFileName, max_mem, nthread, noTrimHeader, noUnmapped, 
+                            zstOutput, tempDir, srcType, srcFile))
         die ("failed to consolidate bam files %s", *argv) ;
     }
-  else if (!bamsort (argv, argc, outFileName, max_mem, nthread, noTrimHeader, zstOutput, tempDir, mergeOnly))
+  else if (!bamsort (argv, argc, outFileName, max_mem, nthread, noTrimHeader, noUnmapped,
+                        zstOutput, tempDir, mergeOnly))
     die ("failed to sort bam file %s", *argv) ;
     
   destroyCommandLine () ;
@@ -149,6 +154,8 @@ static const char *program = "onebam" ;
 #endif
 
 static char *TEMPDIR = ".";
+static bool  NO_UNMAPPED = false; // -noUnmapped: drop records with BAM_FUNMAP from the output
+static size_t N_UNMAPPED_DROPPED = 0; // input unmapped records not written, reported at the end
 
 static void infomsg(char *format, ...);
 static void errmsg(char *format, ...);
@@ -1332,8 +1339,91 @@ static inline int is_read2(const bam1_t *b) {
     return (b->core.flag & BAM_FREAD2) != 0;
 }
 
+// Unmapped records are held back until all records of a read have been seen.
+// Per mate (R1/R2): with any mapped record, all its unmapped records are dropped;
+// with nothing mapped, the first unmapped record is written unchanged after the
+// primaries and any further ones are dropped (-noUnmapped: none is written).
+// They take no part in primary selection. Merges never run concurrently
+// (bamsort1 merges its temporary files one after another on its own thread, and
+// the final merge starts after that), so one static state is enough.
+typedef struct {
+    bam1_t *b[2];    // first unmapped record per mate
+    bool has[2];     // b[] holds a record
+    bool mapped[2];  // the mate has a mapped record
+} unmap_hold_t;
+static unmap_hold_t UHOLD;
+
+// true if rec is unmapped and has been dealt with (held or dropped)
+static inline bool uhold_check(const bam1_t *rec)
+{
+    int r = is_read2(rec);
+    if (rec->core.flag & BAM_FUNMAP) {
+        if (NO_UNMAPPED || UHOLD.has[r]) {
+            N_UNMAPPED_DROPPED++; // only the first unmapped record of a mate is kept
+            return true;
+        }
+        if (!UHOLD.b[r] && !(UHOLD.b[r] = bam_init1())) {
+            errmsg("memory allocation failed");
+            exit(1);
+        }
+        if (!bam_copy1(UHOLD.b[r], rec)) {
+            errmsg("failed copying BAM record");
+            exit(1);
+        }
+        UHOLD.has[r] = true;
+        return true;
+    }
+    UHOLD.mapped[r] = true;
+    return false;
+}
+
+static void uhold_free(void)
+{
+    bam_destroy1(UHOLD.b[0]); // NULL-safe
+    bam_destroy1(UHOLD.b[1]);
+    memset(&UHOLD, 0, sizeof(UHOLD));
+}
+
+// end of a read: write the primaries, then the held unmapped record of a mate
+// with nothing mapped (otherwise it is dropped); reset the per-read state
+static int bw_bam_end_read(bam_writer_t *bw, bam1_t **p_rec, int *p_mas)
+{
+    int r, res = 0;
+    for (r = 0; r < 2; r++)
+        if (p_rec[r] && bw_bam_write1(bw, p_rec[r]) < 0) res = -1;
+    for (r = 0; r < 2; r++) {
+        if (UHOLD.has[r]) {
+            if (UHOLD.mapped[r]) N_UNMAPPED_DROPPED++;
+            else if (bw_bam_write1(bw, UHOLD.b[r]) < 0) res = -1;
+        }
+        UHOLD.has[r] = UHOLD.mapped[r] = false;
+    }
+    p_rec[0] = p_rec[1] = NULL;
+    p_mas[0] = p_mas[1] = INT32_MIN;
+    return res;
+}
+
+static int zstd_bam_end_read(zstd_writer_t *zw, bam1_t **p_rec, int *p_mas)
+{
+    int r, res = 0;
+    for (r = 0; r < 2; r++)
+        if (p_rec[r] && zstd_bam_write1(zw, p_rec[r]) < 0) res = -1;
+    for (r = 0; r < 2; r++) {
+        if (UHOLD.has[r]) {
+            if (UHOLD.mapped[r]) N_UNMAPPED_DROPPED++;
+            else if (zstd_bam_write1(zw, UHOLD.b[r]) < 0) res = -1;
+        }
+        UHOLD.has[r] = UHOLD.mapped[r] = false;
+    }
+    p_rec[0] = p_rec[1] = NULL;
+    p_mas[0] = p_mas[1] = INT32_MIN;
+    return res;
+}
+
 static inline int bw_bam_write_secondary(bam1_t *p_dat, bam1_t *rec, bam1_t **p_rec, int *max_as, bam_writer_t *bw)
 {
+    if (uhold_check(rec))
+        return 0; // unmapped: held until the end of the read
     if (rec->core.flag & SECFLAG)
         // secondary or supplementary record - write directly
         return bw_bam_write1(bw, rec);
@@ -1375,7 +1465,7 @@ static void *bam_merge_thread(void *args)
     size_t n_recs = 0, n_prev = 0;
     bam1_t *p_dat[2], *p_rec[2], **recs;
     int res, new, rd2, p_mas[2], *lcps;
-    char *dups;
+    char *dups, *last_name = NULL;
     Merge *merge = mergeCreateString(T, heaps, yield);
     p_dat[0] = bam_init1(); // for 1st read primary record
     p_dat[1] = bam_init1(); // for 2nd read primary record
@@ -1385,27 +1475,17 @@ static void *bam_merge_thread(void *args)
     push_time(&TIME_STACK);
     // do merging
     while ((m = mergeNext(merge, &list))) {
-        // write primary record if necessary
-        if (p_rec[0] || p_rec[1]) {
-            if (new) {
-                // we could still have the same read from next data chunk
-                t = list[0];
-                j = heaps[t].i - 1;
-                recs = heaps[t].recs;
-                if ((p_rec[0] && strcmp((char *)p_rec[0]->data, (char *)recs[j]->data)) ||
-                    (p_rec[1] && strcmp((char *)p_rec[1]->data, (char *)recs[j]->data)))
-                    new = 0; // we moved to next read
-            }
-            if (!new) {
-                // this must be a new read
-                if ((p_rec[0] && bw_bam_write1(bw, p_rec[0]) < 0) || 
-                    (p_rec[1] && bw_bam_write1(bw, p_rec[1]) < 0)) {
-                    errmsg("failed writing BAM record");
-                    exit(1);
-                }
-                p_rec[0] = p_rec[1] = NULL;
-                p_mas[0] = p_mas[1] = INT32_MIN;
-            }
+        // end the previous read, unless this cohort continues it in a newly buffered chunk
+        if (new) {
+            t = list[0];
+            j = heaps[t].i - 1;
+            recs = heaps[t].recs;
+            if (strcmp(last_name, (char *)recs[j]->data))
+                new = 0; // we moved to next read
+        }
+        if (!new && bw_bam_end_read(bw, p_rec, p_mas) < 0) {
+            errmsg("failed writing BAM record");
+            exit(1);
         }
         new = 0;
         for (i = 0; i < m; i++) {
@@ -1437,6 +1517,7 @@ static void *bam_merge_thread(void *args)
                 }
                 free(heaps[t].dups);
                 heaps[t].dups = dups;
+                last_name = dups; // name of the read in progress
                 new = 1; // will load a new chunk of data
             }
         }
@@ -1446,9 +1527,8 @@ static void *bam_merge_thread(void *args)
             n_prev = n_recs;
         }
     }
-    // write the last primary record if exists
-    if ((p_rec[0] && bw_bam_write1(bw, p_rec[0]) < 0) ||
-        (p_rec[1] && bw_bam_write1(bw, p_rec[1]) < 0)) {
+    // end the last read
+    if (bw_bam_end_read(bw, p_rec, p_mas) < 0) {
         errmsg("failed writing BAM record");
         exit(1);
     }
@@ -1458,11 +1538,14 @@ static void *bam_merge_thread(void *args)
     mergeDestroy(merge);
     bam_destroy1(p_dat[0]);
     bam_destroy1(p_dat[1]);
+    uhold_free();
     return NULL;
 }
 
 static inline int zstd_bam_write_secondary(bam1_t *p_dat, bam1_t *rec, bam1_t **p_rec, int *max_as, zstd_writer_t *zw)
 {
+    if (uhold_check(rec))
+        return 0; // unmapped: held until the end of the read
     if (rec->core.flag & SECFLAG)
         // secondary or supplementary record - write directly
         return zstd_bam_write1(zw, rec);
@@ -1504,7 +1587,7 @@ static void *zst_merge_thread(void *args)
     size_t n_recs = 0, n_prev = 0;
     bam1_t *p_dat[2], *p_rec[2], **recs;
     int res, new, rd2, p_mas[2], *lcps;
-    char *dups;
+    char *dups, *last_name = NULL;
     Merge *merge = mergeCreateString(T, heaps, yield);
     p_dat[0] = bam_init1(); // for 1st read primary record
     p_dat[1] = bam_init1(); // for 2nd read primary record
@@ -1514,27 +1597,17 @@ static void *zst_merge_thread(void *args)
     push_time(&TIME_STACK);
     // do merging
     while ((m = mergeNext(merge, &list))) {
-        // write primary record if necessary
-        if (p_rec[0] || p_rec[1]) {
-            if (new) {
-                // we could still have the same read from next data chunk
-                t = list[0];
-                j = heaps[t].i - 1;
-                recs = heaps[t].recs;
-                if ((p_rec[0] && strcmp((char *)p_rec[0]->data, (char *)recs[j]->data)) ||
-                    (p_rec[1] && strcmp((char *)p_rec[1]->data, (char *)recs[j]->data)))
-                    new = 0; // we moved to next read
-            }
-            if (!new) {
-                // this must be a new read
-                if ((p_rec[0] && zstd_bam_write1(zw, p_rec[0]) < 0) || 
-                    (p_rec[1] && zstd_bam_write1(zw, p_rec[1]) < 0)) {
-                    errmsg("failed writing BAM record");
-                    exit(1);
-                }
-                p_rec[0] = p_rec[1] = NULL;
-                p_mas[0] = p_mas[1] = INT32_MIN;
-            }
+        // end the previous read, unless this cohort continues it in a newly buffered chunk
+        if (new) {
+            t = list[0];
+            j = heaps[t].i - 1;
+            recs = heaps[t].recs;
+            if (strcmp(last_name, (char *)recs[j]->data))
+                new = 0; // we moved to next read
+        }
+        if (!new && zstd_bam_end_read(zw, p_rec, p_mas) < 0) {
+            errmsg("failed writing BAM record");
+            exit(1);
         }
         new = 0;
         for (i = 0; i < m; i++) {
@@ -1566,6 +1639,7 @@ static void *zst_merge_thread(void *args)
                 }
                 free(heaps[t].dups);
                 heaps[t].dups = dups;
+                last_name = dups; // name of the read in progress
                 new = 1; // will load a new chunk of data
             }
         }
@@ -1575,9 +1649,8 @@ static void *zst_merge_thread(void *args)
             n_prev = n_recs;
         }
     }
-    // write the last primary record if exists
-    if ((p_rec[0] && zstd_bam_write1(zw, p_rec[0]) < 0) ||
-        (p_rec[1] && zstd_bam_write1(zw, p_rec[1]) < 0)) {
+    // end the last read
+    if (zstd_bam_end_read(zw, p_rec, p_mas) < 0) {
         errmsg("failed writing BAM record");
         exit(1);
     }
@@ -1591,6 +1664,7 @@ static void *zst_merge_thread(void *args)
     mergeDestroy(merge);
     bam_destroy1(p_dat[0]);
     bam_destroy1(p_dat[1]);
+    uhold_free();
     return NULL;
 }
 
@@ -1790,6 +1864,11 @@ static void *bio_sort_thread(void *args)
             done = true;
             break; // file chunk done
         }
+        if (NO_UNMAPPED && (b->core.flag & BAM_FUNMAP)) {
+            // -noUnmapped: never stored, sorted or used for header trimming
+            __atomic_add_fetch(&N_UNMAPPED_DROPPED, 1, __ATOMIC_RELAXED);
+            continue;
+        }
         if (nrec >= mrec)
             break; // record limit reached
         // update reference map
@@ -1985,15 +2064,10 @@ static bool bam_merge(heap_t *heaps, int T, void *writer)
     p_mas[0] = p_mas[1] = INT32_MIN;
     // do merging
     while ((m = mergeNext(merge, &list))) {
-        // write primary record if necessary
-        if (p_rec[0] || p_rec[1]) {
-            if ((p_rec[0] && bw_bam_write1(bw, p_rec[0]) < 0) || 
-                (p_rec[1] && bw_bam_write1(bw, p_rec[1]) < 0)) {
-                errmsg("failed writing BAM record");
-                goto err;
-            }
-            p_rec[0] = p_rec[1] = NULL;
-            p_mas[0] = p_mas[1] = INT32_MIN;
+        // each cohort is a new read: end the previous one
+        if (bw_bam_end_read(bw, p_rec, p_mas) < 0) {
+            errmsg("failed writing BAM record");
+            goto err;
         }
         for (i = 0; i < m; i++) {
             t = list[i];
@@ -2014,9 +2088,8 @@ static bool bam_merge(heap_t *heaps, int T, void *writer)
             heaps[t].i = j;
         }
     }
-    // write the last primary record if exists
-    if ((p_rec[0] && bw_bam_write1(bw, p_rec[0]) < 0) ||
-        (p_rec[1] && bw_bam_write1(bw, p_rec[1]) < 0)) {
+    // end the last read
+    if (bw_bam_end_read(bw, p_rec, p_mas) < 0) {
         errmsg("failed writing BAM record");
         goto err;
     }
@@ -2026,6 +2099,7 @@ err:
     mergeDestroy(merge);
     bam_destroy1(p_dat[0]);
     bam_destroy1(p_dat[1]);
+    uhold_free();
     return ret;
 }
 
@@ -2043,15 +2117,10 @@ static bool zst_merge(heap_t *heaps, int T, void *writer)
     p_mas[0] = p_mas[1] = INT32_MIN;
     // do merging
     while ((m = mergeNext(merge, &list))) {
-        // write primary record if necessary
-        if (p_rec[0] || p_rec[1]) {
-            if ((p_rec[0] && zstd_bam_write1(zw, p_rec[0]) < 0) || 
-                (p_rec[1] && zstd_bam_write1(zw, p_rec[1]) < 0)) {
-                errmsg("failed writing BAM record");
-                goto err;
-            }
-            p_rec[0] = p_rec[1] = NULL;
-            p_mas[0] = p_mas[1] = INT32_MIN;
+        // each cohort is a new read: end the previous one
+        if (zstd_bam_end_read(zw, p_rec, p_mas) < 0) {
+            errmsg("failed writing BAM record");
+            goto err;
         }
         for (i = 0; i < m; i++) {
             t = list[i];
@@ -2072,9 +2141,8 @@ static bool zst_merge(heap_t *heaps, int T, void *writer)
             heaps[t].i = j;
         }
     }
-    // write the last primary record if exists
-    if ((p_rec[0] && zstd_bam_write1(zw, p_rec[0]) < 0) || 
-        (p_rec[1] && zstd_bam_write1(zw, p_rec[1]) < 0)) {
+    // end the last read
+    if (zstd_bam_end_read(zw, p_rec, p_mas) < 0) {
         errmsg("failed writing BAM record");
         goto err;
     }
@@ -2088,6 +2156,7 @@ err:
     mergeDestroy(merge);
     bam_destroy1(p_dat[0]);
     bam_destroy1(p_dat[1]);
+    uhold_free();
     return ret;
 }
 
@@ -2420,8 +2489,11 @@ static bool open_sorted_file(char *infile, srt_data_t *srt, refseq_builder_t *re
 bool mergebam(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads, bool zstOutput);
 
 bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads, 
-    bool noTrimHeader, bool zstOutput, char *tempDir, bool mergeOnly)
+    bool noTrimHeader, bool noUnmapped, bool zstOutput, char *tempDir, bool mergeOnly)
 {
+    NO_UNMAPPED = noUnmapped;
+    N_UNMAPPED_DROPPED = 0;
+    if (noUnmapped) infomsg("unmapped records will not be written (-noUnmapped)");
     if (mergeOnly) return mergebam(infiles, nIn, outfile, max_mem, n_threads, zstOutput);
 
     bio_data_t *bio_data = NULL;
@@ -2812,6 +2884,9 @@ bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threa
         errmsg("failed to finalize BAM output file");
         goto err;
     }
+    if (N_UNMAPPED_DROPPED)
+        infomsg("unmapped records dropped: %zu%s", N_UNMAPPED_DROPPED,
+            NO_UNMAPPED ? " (-noUnmapped)" : " (duplicates)");
 
     ret = true;
 
@@ -3137,6 +3212,9 @@ bool mergebam(char **infiles, int nIn, char *outfile, size_t max_mem, int n_thre
         errmsg("failed to finalize BAM output file");
         goto err;
     }
+    if (N_UNMAPPED_DROPPED)
+        infomsg("unmapped records dropped: %zu%s", N_UNMAPPED_DROPPED,
+            NO_UNMAPPED ? " (-noUnmapped)" : " (duplicates)");
 
     ret = true;
 
@@ -3202,6 +3280,7 @@ typedef struct {
 typedef struct {
     bam1_t  *pdat[2], *sdat[2], *udat[2]; // best primary, best secondary, unmapped
     bool     hasP[2], hasS[2], hasU[2], mapped[2];
+    bool     uIn[2];  // udat came from an input record (not built from FASTQ)
     int32_t  pAS[2], sAS[2];
 } cons_read_t;
 
@@ -3213,6 +3292,7 @@ typedef struct {
     kstring_t line;
     bam1_t   *src_pending; // -Cb: first record of the next source read
     bool      src_started;
+    bool      in_src;      // cons_add() is taking -Cb source records (not counted as dropped)
     bool      zst;         // writer is a zstd_writer_t (else bam_writer_t)
     uint8_t  *used;        // used reference flags (merged header space) or NULL
     char    **fnames;      // for messages
@@ -3347,11 +3427,14 @@ static inline void cons_add(cons_ctx_t *cx, cons_read_t *rs, void *w, bam1_t *b)
 
     cx->n_in++;
     if (fl & BAM_FUNMAP) {
-        // keep only one unmapped record (read source has priority as it fills first)
-        if (!rs->hasU[m]) {
+        // keep only one unmapped record (read source has priority as it fills first);
+        // with -noUnmapped none is kept
+        if (!NO_UNMAPPED && !rs->hasU[m]) {
             cons_copy(rs->udat[m], b);
             rs->hasU[m] = true;
-        }
+            rs->uIn[m] = !cx->in_src;
+        } else if (!cx->in_src)
+            N_UNMAPPED_DROPPED++; // only alignment-input records are counted
         return;
     }
     rs->mapped[m] = true;
@@ -3407,11 +3490,13 @@ static inline void cons_finish_read(cons_ctx_t *cx, cons_read_t *rs, void *w)
             rs->sdat[m]->core.flag &= ~BAM_FSECONDARY;
             cons_write(cx, w, rs->sdat[m]);
         }
-        if (!rs->mapped[m] && rs->hasU[m]) {
+        if (!NO_UNMAPPED && !rs->mapped[m] && rs->hasU[m]) {
+            // FASTQ sources fill udat for every read; -noUnmapped never writes it
             rs->udat[m]->core.flag &= ~SECFLAG;
             cons_write(cx, w, rs->udat[m]);
-        }
-        rs->hasP[m] = rs->hasS[m] = rs->hasU[m] = rs->mapped[m] = false;
+        } else if (rs->hasU[m] && rs->uIn[m])
+            N_UNMAPPED_DROPPED++; // an input unmapped record not written
+        rs->hasP[m] = rs->hasS[m] = rs->hasU[m] = rs->mapped[m] = rs->uIn[m] = false;
     }
 }
 
@@ -3497,6 +3582,7 @@ static const char *cons_next_read(cons_ctx_t *cx, heap_t *heaps, cons_read_t *rs
             b = cx->src_pending;
             if (!b) return NULL;
             // the first record of the group is copied and provides the name
+            cx->in_src = true;
             cons_add(cx, rs, w, b);
             name = rs->hasU[is_read2(b)]? bam_get_qname(rs->udat[is_read2(b)]) : NULL;
             if (!name) {
@@ -3508,6 +3594,7 @@ static const char *cons_next_read(cons_ctx_t *cx, heap_t *heaps, cons_read_t *rs
             while ((b = cons_next(heaps, cx->nIn, &lcp)) && cons_same(heaps + cx->nIn, lcp, b, name))
                 cons_add(cx, rs, w, b);
             cx->src_pending = b;
+            cx->in_src = false;
             return name;
         default:
             return NULL;
@@ -3768,7 +3855,7 @@ static void cons_free_streams(bam1_stream_t *bs, int n)
 }
 
 bool bamconsolidate(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads,
-    bool noTrimHeader, bool zstOutput, char *tempDir, int srcType, char *srcFile)
+    bool noTrimHeader, bool noUnmapped, bool zstOutput, char *tempDir, int srcType, char *srcFile)
 {
     srt_data_t *srt_data = NULL, srt_tmp;
     sam_hdr_lite_t *header = NULL, *builder = NULL;
@@ -3787,6 +3874,10 @@ bool bamconsolidate(char **infiles, int nIn, char *outfile, size_t max_mem, int 
 
     memset(&cx, 0, sizeof(cx));
     memset(&srt_tmp, 0, sizeof(srt_tmp));
+
+    NO_UNMAPPED = noUnmapped;
+    N_UNMAPPED_DROPPED = 0;
+    if (noUnmapped) infomsg("unmapped records will not be written (-noUnmapped)");
 
     long one = 1;
     IS_BIG_ENDIAN = !(*((char *)(&one)));
@@ -4015,6 +4106,9 @@ bool bamconsolidate(char **infiles, int nIn, char *outfile, size_t max_mem, int 
         errmsg("failed to finalize BAM output file");
         goto err;
     }
+    if (N_UNMAPPED_DROPPED)
+        infomsg("unmapped records dropped: %zu%s", N_UNMAPPED_DROPPED,
+            NO_UNMAPPED ? " (-noUnmapped)" : " (duplicates)");
     infomsg("output written to %s", outfile);
 
     ret = true;

@@ -148,14 +148,14 @@ bool reportLCA (char *readFileName, char *outFileName, char *rank, char *group) 
 // bamsort.c
 extern const size_t SORT_DEFAULT_MEGS_PER_THREAD ;
 bool bamsort (char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads, 
-       bool noTrimHeader, bool zstOutput, char *tempDir, bool mergeOnly) ;
+       bool noTrimHeader, bool noUnmapped, bool zstOutput, char *tempDir, bool mergeOnly) ;
 #ifndef BAMSORT_CSRC_DEFINED
 #define BAMSORT_CSRC_DEFINED
 // read sources for the bamsort -C* consolidate mode
 enum { CSRC_NONE = 0, CSRC_LIST, CSRC_BAM, CSRC_FQ_SE, CSRC_FQ_PE };
 #endif
 bool bamconsolidate (char **infiles, int nIn, char *outfile, size_t max_mem, int n_threads,
-       bool noTrimHeader, bool zstOutput, char *tempDir, int srcType, char *srcFile) ;
+       bool noTrimHeader, bool noUnmapped, bool zstOutput, char *tempDir, int srcType, char *srcFile) ;
 
 // MSDsort.c
 void msd_sort (U8 *array, I64 nels, int rsize, int ksize, int depth, int mark, int nthreads) ;

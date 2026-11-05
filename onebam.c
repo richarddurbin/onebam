@@ -72,6 +72,7 @@ static char usage[] =
   "      -P <tempDir>                     temporary directory for sort files [.]\n"
   "      -zstOutput                       output ZSTD-compressed file\n"
   "      -noTrimHeader                    do not trim header\n"
+  "      -noUnmapped                      do not output unmapped records\n"
 #ifndef HIDE
   "    bam21bam <XX.bam>             convert BAM/SAM/CRAM file to .1bam\n"
   "      -o <ZZ.1bam>                     output file - default is XX.1bam for input XX.bam\n"
@@ -221,6 +222,7 @@ int main (int argc, char *argv[])
       bool noTrimHeader = false ;
       bool zstOutput = false ;
       bool mergeOnly = false ;
+      bool noUnmapped = false ;
       char *tempDir = "." ;
       int   srcType = CSRC_NONE ;
       char *srcFile = 0 ;
@@ -251,16 +253,19 @@ int main (int argc, char *argv[])
     { noTrimHeader = true ; ++argv ; --argc ; }
   else if (!strcmp (*argv, "-zstOutput"))
     { zstOutput = true ; ++argv ; --argc ; }
+  else if (!strcmp (*argv, "-noUnmapped"))
+    { noUnmapped = true ; ++argv ; --argc ; }
   else die ("unknown onebam bamsort option %s - run without args for usage", *argv) ;
       if (argc < 1)
         die ("onebam bamsort needs at least 1 args; run without args for usage") ;
       if (srcType != CSRC_NONE)
         { if (mergeOnly) die ("onebam bamsort: -C* and -M cannot be used together") ;
-          if (!bamconsolidate (argv, argc, outFileName, max_mem, NTHREAD, noTrimHeader, zstOutput,
-                               tempDir, srcType, srcFile))
+          if (!bamconsolidate (argv, argc, outFileName, max_mem, NTHREAD, noTrimHeader, noUnmapped,
+                                zstOutput, tempDir, srcType, srcFile))
             die ("failed to consolidate bam files %s", *argv) ;
         }
-      else if (!bamsort (argv, argc, outFileName, max_mem, NTHREAD, noTrimHeader, zstOutput, tempDir, mergeOnly))
+      else if (!bamsort (argv, argc, outFileName, max_mem, NTHREAD, noTrimHeader, noUnmapped,
+                          zstOutput, tempDir, mergeOnly))
         die ("failed to sort bam file %s", *argv) ;
     }
   else
