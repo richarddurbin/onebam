@@ -12,7 +12,7 @@ As well as the `.1read` pacakge, there is also a `onebam bam21bam` command that 
 ## Installation
 
 ```
-github clone https://github.com/richarddurbin/onebam.git
+git clone https://github.com/richarddurbin/onebam.git
 cd onebam
 git submodule update --init --recursive # download required external libraries htslib and zstd
 make # -j      # optionally with -j to enable parallel compilation
