@@ -245,7 +245,7 @@ static bool sam_hdr_lite_build_targets_tbl(sam_hdr_lite_t *hdr);
 static bool sam_hdr_lite_build_targets_map(sam_hdr_lite_t *hdr);
 static ssize_t sam_hdr_lite_add_lines(sam_hdr_lite_t *hdr, const char *lines, size_t len);
 static ssize_t sam_hdr_lite_add_pg(sam_hdr_lite_t *hdr, const char *id, const char *vn, const char *cl);
-static int sam_hdr_lite_build_HD(sam_hdr_lite_t *hdr, const char *vn, const char *so);
+static int sam_hdr_lite_build_HD(sam_hdr_lite_t *hdr, const char *vn, const char *so, bool go);
 static inline int sam_read1_lite(samFile *fp, sam_hdr_lite_t *header, bam1_t *b);
 static inline int bam_read1_lite(samFile *fp, sam_hdr_lite_t *header, bam1_t *b);
 
@@ -2736,7 +2736,7 @@ bool bamsort(char **infiles, int nIn, char *outfile, size_t max_mem, int n_threa
         errmsg("failed to add PG line to SAM header");
         goto err;
     }
-    if (sam_hdr_lite_build_HD(header, NULL, "queryname") < 0) {
+    if (sam_hdr_lite_build_HD(header, NULL, "queryname", false) < 0) {
         errmsg("failed to build SAM header HD line");
         goto err;
     }
@@ -3082,7 +3082,7 @@ bool mergebam(char **infiles, int nIn, char *outfile, size_t max_mem, int n_thre
         errmsg("failed to add PG line to SAM header");
         goto err;
     }
-    if (sam_hdr_lite_build_HD(builder, NULL, "queryname") < 0) {
+    if (sam_hdr_lite_build_HD(builder, NULL, "queryname", false) < 0) {
         errmsg("failed to build SAM header HD line");
         goto err;
     }
@@ -3990,7 +3990,7 @@ bool bamconsolidate(char **infiles, int nIn, char *outfile, size_t max_mem, int 
         errmsg("failed to add PG line to SAM header");
         goto err;
     }
-    if (sam_hdr_lite_build_HD(builder, NULL, "unsorted") < 0) {
+    if (sam_hdr_lite_build_HD(builder, NULL, "unsorted", true) < 0) {
         errmsg("failed to build SAM header HD line");
         goto err;
     }
@@ -6096,8 +6096,9 @@ static inline char *get_tag(char *ptr, char *eptr, const char *tag)
 static const char *HD_VN_NUMBER = "1.6"; // default version number
 static const char *HD_SO_STRING = "queryname"; // default sort order
 static const char *HD_LINE_FORMAT = "@HD\tVN:%s\tSO:%s\n";
+static const char *HD_LINE_FORMAT_COLL = "@HD\tVN:%s\tSO:%s\tGO:query\n";
 
-static int sam_hdr_lite_build_HD(sam_hdr_lite_t *hdr, const char *_vn, const char *_so)
+static int sam_hdr_lite_build_HD(sam_hdr_lite_t *hdr, const char *_vn, const char *_so, bool go)
 {
     char *vn = NULL, *so = NULL;
     bool new_vn = false;
@@ -6117,7 +6118,10 @@ static int sam_hdr_lite_build_HD(sam_hdr_lite_t *hdr, const char *_vn, const cha
         so = (char *)HD_SO_STRING;
     else so = (char *)_so;
     hdr->hd_text.l = 0;
-    ksprintf(&hdr->hd_text, HD_LINE_FORMAT, vn, so);
+    if (go)
+        ksprintf(&hdr->hd_text, HD_LINE_FORMAT_COLL, vn, so);
+    else
+        ksprintf(&hdr->hd_text, HD_LINE_FORMAT, vn, so);
 
     if (new_vn) free(vn);
     return 0;
